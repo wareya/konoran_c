@@ -1,0 +1,383 @@
+float: TOKEN
+%[0-9]+\.[0-9]+([eE]([+-])?[0-9]+)?f(32|64)%
+%[0-9]+\.([eE]([+-])?[0-9]+)?f(32|64)%
+%\.[0-9]+([eE]([+-])?[0-9]+)?f(32|64)%
+
+integer: TOKEN
+%[\-]?[0-9]+(i|u)(8|16|32|64)%
+%[\-]?0x[0-9A-Fa-f]+(i|u)(8|16|32|64)%
+
+integer_token: TOKEN
+%[0-9]+%
+%0x[0-9A-Fa-f]+%
+
+string: TOKEN
+%"([^"\\]|\\.)*"array_nonull%
+%"([^"\\]|\\.)*"array%
+%"([^"\\]|\\.)*"nonull%
+%"([^"\\]|\\.)*"%
+
+char: TOKEN
+%'\\[\\'nrt]'u32%
+%'[^\\]'u32%
+%'\\[\\'nrt]'%
+%'[^\\]'%
+
+name: TOKEN
+%[a-zA-Z_][0-9a-zA-Z_]*%
+
+embedname: EMBED
+%[a-zA-Z_][0-9a-zA-Z_]*%
+
+rvarname:
+$embedname$
+
+ptr_type: HIDELITERALS
+ptr ( $type$ )
+
+funcptr_args:
+>>? $type$...,
+
+funcptr_type: HIDELITERALS
+funcptr ( $type$ , ( $funcptr_args$ ) )
+
+array_type: HIDELITERALS
+array ( $type$ , $integer_token$ )
+
+fundamental_type: TOKEN
+void
+u8
+i8
+u16
+i16
+u32
+i32
+u64
+i64
+f32
+f64
+
+struct_type:
+$embedname$
+
+type:
+$ptr_type$
+$funcptr_type$
+$array_type$
+$fundamental_type$
+$struct_type$
+
+capsname: TOKEN
+%[A-Z][0-9a-zA-Z_]*%
+
+parenexpr: HIDELITERALS
+( $expr$ )
+
+lvar_name:
+$name$
+
+lvar:
+$rhunexpr$
+$unary$
+$lvar_name$
+
+ternary: HIDELITERALS
+( $expr$ ? $expr$ : $expr$ )
+( $expr$ ? : $expr$ )
+
+cast: HIDELITERALS
+( $expr$ ) as $type$
+
+unsafe_cast: HIDELITERALS
+( $expr$ ) unsafe_as $type$
+
+bitcast: HIDELITERALS
+( $expr$ ) bit_as $type$
+
+unusedcomma:
+,
+
+array_literal: HIDELITERALS
+[ $expr$..., $unusedcomma$? ]
+
+struct_literal: HIDELITERALS
+$struct_type$ { $expr$..., $unusedcomma$? }
+
+sizeof: HIDELITERALS
+sizeof $type$
+
+freeze: HIDELITERALS
+freeze $expr$
+
+constexpr: HIDELITERALS
+constexpr $expr$
+
+supersimplexpr: SIMPLIFY
+$sizeof$
+$constexpr$
+$freeze$
+$ternary$
+$cast$
+$unsafe_cast$
+$bitcast$
+$array_literal$
+$struct_literal$
+$parenexpr$
+$float$
+$integer$
+$char$
+$string$
+$rvarname$
+
+simplexpr: SIMPLIFY
+$sizeof$
+$constexpr$
+$freeze$
+$intrinsic$
+$intrinsic_v$
+$ternary$
+$cast$
+$unsafe_cast$
+$bitcast$
+$array_literal$
+$struct_literal$
+$rhunexpr$
+$parenexpr$
+$float$
+$integer$
+$char$
+$string$
+$rvarname$
+
+expr: SIMPLIFY
+$binexpr_0$
+
+binexpr_0: SIMPLIFY LEFTBINEXPR 0
+$binexpr_1$ >>? $binop_0$ $binexpr_0$
+
+binexpr_1: SIMPLIFY LEFTBINEXPR 1
+$binexpr_2$ >>? $binop_1$ $binexpr_1$
+
+binexpr_2: SIMPLIFY LEFTBINEXPR 2
+$binexpr_3$ >>? $binop_2$ $binexpr_2$
+
+binexpr_3: SIMPLIFY LEFTBINEXPR 3
+$binexpr_4$ >>? $binop_3$ $binexpr_3$
+
+binexpr_4: SIMPLIFY LEFTBINEXPR 4
+$binexpr_5$ >>? $binop_4$ $binexpr_4$
+
+binexpr_5: SIMPLIFY LEFTBINEXPR 5
+$lhunop$ >>? $binop_5$ $binexpr_5$
+
+unary:
+$unop$ $lhunop$
+
+lhunop: SIMPLIFY
+$unary$
+$simplexpr$
+
+
+unop:
+decay_to_ptr
+not
+!
+-
++
+~
+*
+&
+@
+
+binop_0:
+and
+or
+&&
+||
+
+binop_1:
+&
+|
+^
+
+binop_2:
+==
+!=
+>=
+<=
+>
+<
+
+binop_3:
+<<
+>>
+shl_unsafe
+shr_unsafe
+
+binop_4:
++
+-
+
+binop_5:
+*
+/
+div_unsafe
+%
+rem_unsafe
+
+arglist: EMBED
+$expr$...,
+
+funcargs: HIDELITERALS
+( $arglist$? )
+
+arrayindex: HIDELITERALS
+[ $expr$ ]
+
+indirection: HIDELITERALS
+. $embedname$
+
+rhunexpr_right:
+$funcargs$
+$arrayindex$
+$indirection$
+
+rhunexpr:
+$supersimplexpr$ $rhunexpr_right$+
+
+statementlist: HIDELITERALS
+{ $statement$* }
+
+binstateop:
+=
+
+binstate: HIDELITERALS
+$lvar$ $binstateop$ $expr$ ;
+
+funcarg:
+$type$ $name$
+
+funcdefargs:
+>>? $funcarg$...,
+
+loose_funcarg:
+$type$ >>? $name$
+
+loose_funcdefargs:
+>>? $loose_funcarg$...,
+
+funcbody:
+$statementlist$
+
+intrinsic: HIDELITERALS
+intrinsic $name$ $funcargs$
+
+intrinsic_v: HIDELITERALS
+intrinsic_v $integer_token$ x $type$ $name$ $funcargs$
+
+vismodifier:
+# best effort export for dlls etc
+>>? export_extern
+# do not expose to other modules At All
+>>? private
+
+funcdef: HIDELITERALS
+$vismodifier$ $type$ $name$ ( $funcdefargs$ ) $funcbody$
+
+structparts:
+$declaration$+
+
+structdef: HIDELITERALS
+struct $name$ { $structparts$ }
+
+ifgoto: HIDELITERALS
+if $parenexpr$ goto $name$ ;
+
+ifcondition: HIDELITERALS
+if $parenexpr$ $statementlist$ else $ifcondition$
+if $parenexpr$ $statementlist$ else $statementlist$
+if $parenexpr$ $statementlist$
+
+goto: HIDELITERALS
+goto $name$ ;
+
+return: HIDELITERALS
+return $expr$ ;
+return ;
+
+#intrinsic_memcpy: HIDELITERALS
+#intrinsic_memcpy $expr$ $expr$ $expr$ ;
+
+#intrinsic_memcpy_volatile: HIDELITERALS
+#intrinsic_memcpy_volatile $expr$ $expr$ $expr$ ;
+
+#intrinsic_memmove: HIDELITERALS
+#intrinsic_memmove $expr$ $expr$ $expr$ ;
+
+#intrinsic_memmove_volatile: HIDELITERALS
+#intrinsic_memmove_volatile $expr$ $expr$ $expr$ ;
+
+#intrinsic_memset: HIDELITERALS
+#intrinsic_memset $expr$ $expr$ $expr$ ;
+
+#intrinsic_memset_volatile: HIDELITERALS
+#intrinsic_memset_volatile $expr$ $expr$ $expr$ ;
+
+instruction:
+$goto$
+$return$
+
+label: HIDELITERALS
+$name$ :
+
+declaration: HIDELITERALS
+$type$ $name$ ;
+
+fulldeclaration: HIDELITERALS
+$type$ $name$ = $expr$ ;
+
+constexpr_fulldeclaration: HIDELITERALS
+constexpr $type$ $name$ = $expr$ ;
+
+globaldeclaration: HIDELITERALS
+$vismodifier$ $type$ $name$ ;
+
+globalfulldeclaration: HIDELITERALS
+$vismodifier$ $type$ $name$ = $expr$ ;
+
+constexpr_globalfulldeclaration: HIDELITERALS
+constexpr $type$ $name$ = $expr$ ;
+
+importsource:
+import_extern
+using
+
+importglobal: HIDELITERALS
+$importsource$ $type$ $name$ ;
+
+importfunc: HIDELITERALS
+$importsource$ $type$ $name$ ( $loose_funcdefargs$ ) ;
+
+statement: HIDELITERALS
+$instruction$
+$statementlist$
+$declaration$
+$fulldeclaration$
+$constexpr_fulldeclaration$
+$ifgoto$
+$ifcondition$
+$binstate$
+$label$
+$expr$ ;
+
+rootstatement: SIMPLIFY
+$importglobal$
+$importfunc$
+$globaldeclaration$
+$globalfulldeclaration$
+$constexpr_globalfulldeclaration$
+$structdef$
+$funcdef$
+
+program:
+$rootstatement$*

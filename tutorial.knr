@@ -1,0 +1,21 @@
+i32 main(i32 argc, ptr(ptr(u8)) argv)
+{
+    if (argc <= 1i32)
+    {
+        return -1i32;
+    }
+    
+    u64 n = 0u64;
+    ptr(u8) c = *(argv + sizeof ptr(u8));
+
+    loop_head:
+    if (*c != 0u8)
+    {
+        n = (n * 10u64) + (*c - '0') as u64;
+        c = c + 1u64;
+        goto loop_head;
+    }
+    
+    print_float((n) as f64);
+    return 0i32;
+}
