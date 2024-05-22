@@ -124,6 +124,30 @@ Node * insert_node(Node * newnode, Node * parent)
     }
     return newnode;
 }
+Node * pop_node(Node * parent)
+{
+    if (!parent)
+        return 0;
+    if (!parent->first_child)
+        return 0;
+    Node * prev = parent->first_child;
+    if (!prev->next_sibling)
+    {
+        // only one child left, return it
+        prev->parent = 0;
+        parent->first_child = 0;
+        parent->childcount -= 1;
+        return prev;
+    }
+    while (prev->next_sibling && prev->next_sibling->next_sibling)
+        prev = prev->next_sibling;
+    // now prev->next_sibling->next_sibling is 0, i.e. prev->next_sibling is the last child
+    Node * ret = prev->next_sibling;
+    ret->parent = 0;
+    prev->next_sibling = 0;
+    parent->childcount -= 1;
+    return ret;
+}
 Node * add_node(int type)
 {
     Node * newnode = (Node *)malloc(sizeof(Node));
@@ -909,9 +933,26 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * root = add_node(type);
         insert_node(child_1, root);
         insert_node(found_op, root);
-        insert_node(child_2, root);
-        
-        return (*next_tokens = tokens), root;
+        // need to build rotated version (same precedence, wrong associativity)
+        // involves rebuilding child2
+        if (type == child_2->type)
+        {
+            Node * f2 = pop_node(child_2);
+            Node * op2 = pop_node(child_2);
+            Node * f1 = pop_node(child_2);
+            insert_node(f1, root);
+            insert_node(root, child_2);
+            insert_node(op2, child_2);
+            insert_node(f2, child_2);
+            
+            return (*next_tokens = tokens), child_2;
+        }
+        // right-associative version is fine
+        else
+        {
+            insert_node(child_2, root);
+            return (*next_tokens = tokens), root;
+        }
     } break;
     case SIMPLEXPR: // hoists child into self
     case SUPERSIMPLEXPR:
