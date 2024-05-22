@@ -100,12 +100,11 @@ typedef struct _Node {
     size_t textlen;
     size_t childcount;
     struct _Node * parent;
-    struct _Node * prev_sibling;
     struct _Node * next_sibling;
     struct _Node * first_child;
 } Node;
 
-Node * insert_node(Node * newnode, Node * parent, Node * prev_sibling)
+Node * insert_node(Node * newnode, Node * parent)
 {
     if (!newnode)
         return newnode;
@@ -113,22 +112,23 @@ Node * insert_node(Node * newnode, Node * parent, Node * prev_sibling)
     {
         if (!parent->first_child)
             parent->first_child = newnode;
+        else
+        {
+            Node * prev = parent->first_child;
+            while (prev->next_sibling)
+                prev = prev->next_sibling;
+            prev->next_sibling = newnode;
+        }
         newnode->parent = parent;
         parent->childcount += 1;
     }
-    if (prev_sibling)
-    {
-        prev_sibling->next_sibling = newnode;
-        newnode->prev_sibling = prev_sibling;
-    }
     return newnode;
 }
-Node * add_node(Node * parent, Node * prev_sibling, int type)
+Node * add_node(int type)
 {
     Node * newnode = (Node *)malloc(sizeof(Node));
     memset(newnode, 0, sizeof(Node));
     newnode->type = type;
-    insert_node(newnode, parent, prev_sibling);
     return newnode;
 }
 
@@ -187,7 +187,7 @@ Node * parse_as_text(Token * tokens, char * text, Token ** next_tokens)
 {
     if (token_is_exact(tokens, text))
     {
-        Node * root = add_node(0, 0, SIGIL);
+        Node * root = add_node(SIGIL);
         root->text = tokens->text;
         root->textlen = tokens->len;
         *next_tokens = tokens->next;
@@ -220,7 +220,7 @@ Node * parse_as_token_form(Token * tokens, int form, Token ** next_tokens)
             puts("unknown token type encountered; lexer broken");
             exit(-1);
         }
-        Node * root = add_node(0, 0, type);
+        Node * root = add_node(type);
         root->text = tokens->text;
         root->textlen = tokens->len;
         *next_tokens = tokens->next;
@@ -256,14 +256,10 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
     {
     case PROGRAM:
     {
-        Node * root = add_node(0, 0, PROGRAM);
-        Node * prev = 0;
+        Node * root = add_node(PROGRAM);
         Node * next = 0;
         while ((next = parse_as(tokens, ROOTSTATEMENT, &tokens)))
-        {
-            insert_node(next, root, prev);
-            prev = next;
-        }
+            insert_node(next, root);
         return (*next_tokens = tokens), root;
     } break;
     case ROOTSTATEMENT: // hoists child
@@ -300,10 +296,10 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
-        Node * root = add_node(0, 0, IMPORTGLOBAL);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
+        Node * root = add_node(IMPORTGLOBAL);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
         return (*next_tokens = tokens), root;
     } break;
     case TERNARY:
@@ -324,15 +320,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(does_parse_as_text(tokens, ")", &tokens)))
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
-        Node * root = add_node(0, 0, TERNARY);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(TERNARY);
+        insert_node(child_1, root);
         if (child_2)
-        {
-            insert_node(child_2, root, child_1);
-            insert_node(child_3, root, child_2);
-        }
-        else
-            insert_node(child_3, root, child_1);
+            insert_node(child_2, root);
+        insert_node(child_3, root);
         return (*next_tokens = tokens), root;
     } break;
     case IMPORTFUNC:
@@ -355,11 +347,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_4(&child_1, &child_2, &child_3, &child_4), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_4(&child_1, &child_2, &child_3, &child_4), NULL;
-        Node * root = add_node(0, 0, IMPORTFUNC);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
-        insert_node(child_4, root, child_3);
+        Node * root = add_node(IMPORTFUNC);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
+        insert_node(child_4, root);
         return (*next_tokens = tokens), root;
     } break;
     case FUNCDEF:
@@ -383,12 +375,12 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_4(&child_1, &child_2, &child_3, &child_4), NULL;
         if (!(child_5 = parse_as(tokens, FUNCBODY, &tokens)))
             return free_nodes_4(&child_1, &child_2, &child_3, &child_4), NULL;
-        Node * root = add_node(0, 0, FUNCDEF);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
-        insert_node(child_4, root, child_3);
-        insert_node(child_5, root, child_4);
+        Node * root = add_node(FUNCDEF);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
+        insert_node(child_4, root);
+        insert_node(child_5, root);
         return (*next_tokens = tokens), root;
     } break;
     case STRUCTDEF:
@@ -405,9 +397,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_node(&child_1), NULL;
         if (!(does_parse_as_text(tokens, "}", &tokens)))
             return free_nodes_2(&child_1, &child_2), NULL;
-        Node * root = add_node(0, 0, STRUCTDEF);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(STRUCTDEF);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case STRUCTPARTS:
@@ -415,14 +407,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * child_prev = 0;
         if (!(child_prev = parse_as(tokens, DECLARATION, &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, STRUCTPARTS);
-        insert_node(child_prev, root, 0);
+        Node * root = add_node(STRUCTPARTS);
+        insert_node(child_prev, root);
         Node * child_next = 0;
         while ((child_next = parse_as(tokens, DECLARATION, &tokens)))
-        {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
-        }
+            insert_node(child_next, root);
         return (*next_tokens = tokens), root;
     } break;
     case LOOSE_FUNCARG:
@@ -430,25 +419,23 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * child_1 = 0;
         if (!(child_1 = parse_as(tokens, TYPE, &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, LOOSE_FUNCARG);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(LOOSE_FUNCARG);
+        insert_node(child_1, root);
         Node * child_2 = 0;
         if ((child_2 = parse_as(tokens, NAME, &tokens)))
         {
-            insert_node(child_2, root, child_1);
+            insert_node(child_2, root);
         }
         return (*next_tokens = tokens), root;
     } break;
     case LOOSE_FUNCDEFARGS:
     {
-        Node * root = add_node(0, 0, LOOSE_FUNCDEFARGS);
-        Node * child_prev = 0;
+        Node * root = add_node(LOOSE_FUNCDEFARGS);
         Node * child_next = 0;
         Token * lasttokens = tokens;
         while ((child_next = parse_as(tokens, LOOSE_FUNCARG, &tokens)))
         {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
+            insert_node(child_next, root);
             lasttokens = tokens;
             if (!(does_parse_as_text(tokens, ",", &tokens)))
                 break;
@@ -464,21 +451,19 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_2 = parse_as(tokens, NAME, &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, FUNCARG);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(FUNCARG);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case FUNCDEFARGS:
     {
-        Node * root = add_node(0, 0, FUNCDEFARGS);
-        Node * child_prev = 0;
+        Node * root = add_node(FUNCDEFARGS);
         Node * child_next = 0;
         Token * lasttokens = tokens;
         while ((child_next = parse_as(tokens, FUNCARG, &tokens)))
         {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
+            insert_node(child_next, root);
             lasttokens = tokens;
             if (!(does_parse_as_text(tokens, ",", &tokens)))
                 break;
@@ -488,14 +473,12 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
     } break;
     case FUNCPTR_ARGS:
     {
-        Node * root = add_node(0, 0, FUNCPTR_ARGS);
-        Node * child_prev = 0;
+        Node * root = add_node(FUNCPTR_ARGS);
         Node * child_next = 0;
         Token * lasttokens = tokens;
         while ((child_next = parse_as(tokens, TYPE, &tokens)))
         {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
+            insert_node(child_next, root);
             lasttokens = tokens;
             if (!(does_parse_as_text(tokens, ",", &tokens)))
                 break;
@@ -505,13 +488,13 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
     } break;
     case ARGLIST:
     {
-        Node * root = add_node(0, 0, ARGLIST);
+        Node * root = add_node(ARGLIST);
         Node * child_prev = 0;
         Node * child_next = 0;
         Token * lasttokens = tokens;
         while ((child_next = parse_as(tokens, EXPR, &tokens)))
         {
-            insert_node(child_next, root, child_prev);
+            insert_node(child_next, root);
             child_prev = child_next;
             lasttokens = tokens;
             if (!(does_parse_as_text(tokens, ",", &tokens)))
@@ -529,8 +512,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_1 = parse_as(tokens, TYPE, &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, SIZEOF);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(SIZEOF);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case CONSTEXPR:
@@ -542,8 +525,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_1 = parse_as(tokens, EXPR, &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, type);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(type);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case IFGOTO:
@@ -560,9 +543,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_node(&child_1), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_2(&child_1, &child_2), NULL;
-        Node * root = add_node(0, 0, IFGOTO);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(IFGOTO);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case IFCONDITION:
@@ -576,9 +559,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         if (!(child_2 = parse_as(tokens, STATEMENTLIST, &tokens)))
             return free_node(&child_1), NULL;
         
-        Node * root = add_node(0, 0, IFCONDITION);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(IFCONDITION);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         
         Token * lasttokens = tokens;
         
@@ -589,7 +572,7 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         if ((child_3 = parse_as(tokens, IFCONDITION, &tokens)) ||
             (child_3 = parse_as(tokens, STATEMENTLIST, &tokens)))
         {
-            insert_node(child_3, root, child_2);
+            insert_node(child_3, root);
             return (*next_tokens = tokens), root;
         }
         else
@@ -604,8 +587,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, GOTO);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(GOTO);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case DECLARATION:
@@ -618,9 +601,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_node(&child_1), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_2(&child_1, &child_2), NULL;
-        Node * root = add_node(0, 0, DECLARATION);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(DECLARATION);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case FUNCBODY:
@@ -628,22 +611,18 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * child_1 = 0;
         if (!(child_1 = parse_as(tokens, STATEMENTLIST, &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, FUNCBODY);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(FUNCBODY);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case STATEMENTLIST:
     {
         if (!(does_parse_as_text(tokens, "{", &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, STATEMENTLIST);
-        Node * child_prev = 0;
+        Node * root = add_node(STATEMENTLIST);
         Node * child_next = 0;
         while ((child_next = parse_as(tokens, STATEMENT, &tokens)))
-        {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
-        }
+            insert_node(child_next, root);
         if (!(does_parse_as_text(tokens, "}", &tokens)))
             return free_node(&root), NULL;
         return (*next_tokens = tokens), root;
@@ -652,12 +631,12 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
     {
         if (!(does_parse_as_text(tokens, "[", &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, ARRAY_LITERAL);
+        Node * root = add_node(ARRAY_LITERAL);
         Node * child_prev = 0;
         Node * child_next = 0;
         while ((child_next = parse_as(tokens, EXPR, &tokens)))
         {
-            insert_node(child_next, root, child_prev);
+            insert_node(child_next, root);
             child_prev = child_next;
             if (!(does_parse_as_text(tokens, ",", &tokens)))
                 break;
@@ -670,19 +649,16 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
     } break;
     case STRUCT_LITERAL:
     {
-        Node * child_prev = 0;
         Node * child_next = 0;
         if (!(child_next = parse_as(tokens, TYPE, &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, STRUCT_LITERAL);
-        insert_node(child_next, root, child_prev);
-        child_prev = child_next;
+        Node * root = add_node(STRUCT_LITERAL);
+        insert_node(child_next, root);
         if (!(does_parse_as_text(tokens, "{", &tokens)))
             return free_node(&root), NULL;
         while ((child_next = parse_as(tokens, EXPR, &tokens)))
         {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
+            insert_node(child_next, root);
             if (!(does_parse_as_text(tokens, ",", &tokens)))
                 break;
         }
@@ -705,16 +681,16 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             (child = parse_as(tokens, BINSTATE, &tokens)) ||
             (child = parse_as(tokens, LABEL, &tokens)))
         {
-            Node * root = add_node(0, 0, STATEMENT);
-            insert_node(child, root, 0);
+            Node * root = add_node(STATEMENT);
+            insert_node(child, root);
             return (*next_tokens = tokens), root;
         }
         if ((child = parse_as(tokens, EXPR, &tokens)))
         {
             if (!(does_parse_as_text(tokens, ";", &tokens)))
                 return free_node(&child), NULL;
-            Node * root = add_node(0, 0, STATEMENT);
-            insert_node(child, root, 0);
+            Node * root = add_node(STATEMENT);
+            insert_node(child, root);
             return (*next_tokens = tokens), root;
         }
         return NULL;
@@ -732,10 +708,10 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
-        Node * root = add_node(0, 0, GLOBALDECLARATION);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
+        Node * root = add_node(GLOBALDECLARATION);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
         return (*next_tokens = tokens), root;
     } break;
     case GLOBALFULLDECLARATION:
@@ -756,11 +732,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_4(&child_1, &child_2, &child_3, &child_4), NULL;
-        Node * root = add_node(0, 0, GLOBALFULLDECLARATION);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
-        insert_node(child_4, root, child_3);
+        Node * root = add_node(GLOBALFULLDECLARATION);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
+        insert_node(child_4, root);
         return (*next_tokens = tokens), root;
     } break;
     case FULLDECLARATION:
@@ -778,10 +754,10 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
-        Node * root = add_node(0, 0, FULLDECLARATION);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
+        Node * root = add_node(FULLDECLARATION);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
         return (*next_tokens = tokens), root;
     } break;
     case CONSTEXPR_GLOBALFULLDECLARATION:
@@ -802,10 +778,10 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
-        Node * root = add_node(0, 0, type);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
+        Node * root = add_node(type);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
         return (*next_tokens = tokens), root;
     } break;
     case RETURN:
@@ -817,13 +793,13 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         {
             if (!(does_parse_as_text(tokens, ";", &tokens)))
                 return free_node(&child_1), NULL;
-            Node * root = add_node(0, 0, RETURN);
+            Node * root = add_node(RETURN);
             return (*next_tokens = tokens), root;
         }
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return NULL;
-        Node * root = add_node(0, 0, RETURN);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(RETURN);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case LVAR:
@@ -833,8 +809,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             (child = parse_as(tokens, UNARY, &tokens)) ||
             (child = parse_as(tokens, LVAR_NAME, &tokens)))
         {
-            Node * root = add_node(0, 0, LVAR);
-            insert_node(child, root, 0);
+            Node * root = add_node(LVAR);
+            insert_node(child, root);
             return (*next_tokens = tokens), root;
         }
         return NULL;
@@ -847,15 +823,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_next = parse_as(tokens, RHUNEXPR_RIGHT, &tokens)))
             return free_node(&child_prev), NULL;
-        Node * root = add_node(0, 0, RHUNEXPR);
-        insert_node(child_prev, root, 0);
-        insert_node(child_next, root, child_prev);
-        child_prev = child_next;
+        Node * root = add_node(RHUNEXPR);
+        insert_node(child_prev, root);
+        insert_node(child_next, root);
         while ((child_next = parse_as(tokens, RHUNEXPR_RIGHT, &tokens)))
-        {
-            insert_node(child_next, root, child_prev);
-            child_prev = child_next;
-        }
+            insert_node(child_next, root);
         return (*next_tokens = tokens), root;
     } break;
     case RHUNEXPR_RIGHT: // hoists child into self
@@ -874,8 +846,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_1 = parse_as(tokens, NAME, &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, INDIRECTION);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(INDIRECTION);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case EXPR: // hoists child into self
@@ -934,10 +906,10 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             tokens = lasttokens;
             return (*next_tokens = tokens), child_1;
         }
-        Node * root = add_node(0, 0, type);
-        insert_node(child_1, root, 0);
-        insert_node(found_op, root, child_1);
-        insert_node(child_2, root, found_op);
+        Node * root = add_node(type);
+        insert_node(child_1, root);
+        insert_node(found_op, root);
+        insert_node(child_2, root);
         
         return (*next_tokens = tokens), root;
     } break;
@@ -985,9 +957,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_2 = parse_as(tokens, LHUNOP, &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, UNARY);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(UNARY);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case LHUNOP: // hoists child
@@ -1035,9 +1007,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_node(&child_1), NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_nodes_2(&child_1, &child_2), NULL;
-        Node * root = add_node(0, 0, BINSTATE);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(BINSTATE);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case VISMODIFIER: // hoists child
@@ -1047,7 +1019,7 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return (*next_tokens = tokens), root;
         if ((root = parse_as_text(tokens, "private", &tokens)))
             return (*next_tokens = tokens), root;
-        return add_node(0, 0, GOODDUMMY);
+        return add_node(GOODDUMMY);
     } break;
     case PTR_TYPE:
     {
@@ -1061,8 +1033,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         if (!(does_parse_as_text(tokens, ")", &tokens)))
             return free_node(&child_1), NULL;
         //printf("ptr success %lld %lld\n", tokens->line, tokens->column);
-        Node * root = add_node(0, 0, PTR_TYPE);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(PTR_TYPE);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case ARRAY_TYPE:
@@ -1082,9 +1054,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         if (!(does_parse_as_text(tokens, ")", &tokens)))
             return free_nodes_2(&child_1, &child_2), NULL;
         //printf("array success %lld %lld\n", tokens->line, tokens->column);
-        Node * root = add_node(0, 0, ARRAY_TYPE);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(ARRAY_TYPE);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case FUNCPTR_TYPE:
@@ -1107,9 +1079,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(does_parse_as_text(tokens, ")", &tokens)))
             return free_nodes_2(&child_1, &child_2), NULL;
-        Node * root = add_node(0, 0, FUNCPTR_TYPE);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(FUNCPTR_TYPE);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case CAST:
@@ -1125,9 +1097,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_node(&child_1), NULL;
         if (!(child_2 = parse_as(tokens, TYPE, &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, type);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(type);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case INTRINSIC:
@@ -1140,9 +1112,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(child_2 = parse_as(tokens, FUNCARGS, &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, INTRINSIC);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
+        Node * root = add_node(INTRINSIC);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
         return (*next_tokens = tokens), root;
     } break;
     case INTRINSIC_V:
@@ -1163,11 +1135,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return free_nodes_2(&child_1, &child_2), NULL;
         if (!(child_4 = parse_as(tokens, FUNCARGS, &tokens)))
             return free_nodes_3(&child_1, &child_2, &child_3), NULL;
-        Node * root = add_node(0, 0, INTRINSIC);
-        insert_node(child_1, root, 0);
-        insert_node(child_2, root, child_1);
-        insert_node(child_3, root, child_2);
-        insert_node(child_4, root, child_3);
+        Node * root = add_node(INTRINSIC);
+        insert_node(child_1, root);
+        insert_node(child_2, root);
+        insert_node(child_3, root);
+        insert_node(child_4, root);
         return (*next_tokens = tokens), root;
     } break;
     case FUNCARGS:
@@ -1177,8 +1149,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * child_1 = parse_as(tokens, ARGLIST, &tokens);
         if (!(does_parse_as_text(tokens, ")", &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, FUNCARGS);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(FUNCARGS);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case ARRAYINDEX:
@@ -1190,8 +1162,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(does_parse_as_text(tokens, "]", &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, ARRAYINDEX);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(ARRAYINDEX);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case PARENEXPR:
@@ -1203,8 +1175,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(does_parse_as_text(tokens, ")", &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, PARENEXPR);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(PARENEXPR);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case LABEL:
@@ -1214,8 +1186,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(does_parse_as_text(tokens, ":", &tokens)))
             return free_node(&child_1), NULL;
-        Node * root = add_node(0, 0, LABEL);
-        insert_node(child_1, root, 0);
+        Node * root = add_node(LABEL);
+        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case FUNDAMENTAL_TYPE: // hoists child as own type
@@ -1240,8 +1212,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * child = 0;
         if ((child = parse_as(tokens, NAME, &tokens)))
         {
-            Node * root = add_node(0, 0, STRUCT_TYPE);
-            insert_node(child, root, 0);
+            Node * root = add_node(STRUCT_TYPE);
+            insert_node(child, root);
             return (*next_tokens = tokens), root;
         }
         return NULL;
@@ -1255,8 +1227,8 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             (child = parse_as(tokens, FUNDAMENTAL_TYPE, &tokens)) ||
             (child = parse_as(tokens, STRUCT_TYPE, &tokens)))
         {
-            Node * root = add_node(0, 0, TYPE);
-            insert_node(child, root, 0);
+            Node * root = add_node(TYPE);
+            insert_node(child, root);
             return (*next_tokens = tokens), root;
         }
         return NULL;
