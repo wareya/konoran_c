@@ -1,0 +1,123 @@
+
+i32 test1(i8 arg)
+{
+    {
+        return 0i32;
+    }
+}
+
+i32 test1 = 91453i32;
+
+i32 test2(i8 arg)
+{
+    i32 test1 = 91453i32;
+    if (arg)
+    {
+        i32 test1 = 91453i32;
+        return 9245i32;
+    }
+    return 0i32;
+}
+i32 test3(i8 arg)
+{
+    if (arg)
+    {
+        return 9245i32;
+    }
+    else
+    {
+        return 0i32;
+    }
+}
+i32 test4(i8 arg)
+{
+    infiniteloop:
+    {
+        goto infiniteloop;
+    }
+}
+
+u8 sdklf = 15u8;
+ptr(u8) myfunc_1()
+{
+    print_float(01011001.0f64);
+    return &sdklf;
+}
+u8 myfunc_2()
+{
+    print_float(20201.20201f64);
+    return 81u8;
+}
+
+
+void main()
+{
+    // myfunc_1 runs before myfunc_2
+    *myfunc_1() = myfunc_2();
+    
+    // branching compiler support tests follow
+    
+    f64 myfloat = 12953.94193f64;
+    if (myfloat == 0.0f64)
+        goto down;
+    
+    up:
+    goto furtherdown;
+    
+    down:
+    if (myfloat == 0.0f64)
+        goto up;
+    
+    goto furtherdown;
+    {
+        f64 valid_variable = 4103.19f64;
+        furtherdown:
+        //print_float(valid_variable); // UB; value of valid_variable is not yet uninitialized, will print arbitrary (possibly poison) data. however, this would not access *unallocated* memory, only *uninitialized* memory.
+        print_float(freeze valid_variable); // not UB; the 'freeze' operator turns undefined/poison data into valid (but arbitrary/unknown) data
+        valid_variable = 91.1f64;
+        print_float(valid_variable); // now valid
+        
+        constexpr f64 ogawer = 9013.1f64;
+        //f64 ogawer = 53489.11f64; // invalid; cannot shadow variables or constants from the same scope
+    }
+    // invalid; left scope
+    //print_float(ogawer);
+    
+    if (1u8)
+    {
+        print_float(3.14f64);
+    }
+    
+    if (0u8)
+    {
+        print_float(13.14f64);
+    }
+    else
+    {
+        print_float(540.2f64);
+    }
+    
+    if (0u8)
+    {
+        print_float(13.14f64);
+    }
+    else if (152u8)
+    {
+        print_float(150.5154f64);
+    }
+    else
+    {
+        print_float(0.5154f64);
+    }
+    
+    if (0u8)
+    {
+        print_float(13.14f64);
+    }
+    else if (152u8)
+    {
+        print_float(05.5154f64);
+    }
+
+    return;
+}

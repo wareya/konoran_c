@@ -8,8 +8,8 @@ integer: TOKEN
 %[\-]?0x[0-9A-Fa-f]+(i|u)(8|16|32|64)%
 
 integer_token: TOKEN
-%[0-9]+%
 %0x[0-9A-Fa-f]+%
+%[0-9]+%
 
 string: TOKEN
 %"([^"\\]|\\.)*"array_nonull%
@@ -86,13 +86,13 @@ ternary: HIDELITERALS
 ( $expr$ ? : $expr$ )
 
 cast: HIDELITERALS
-( $expr$ ) as $type$
+$parenexpr$ as $type$
 
 unsafe_cast: HIDELITERALS
-( $expr$ ) unsafe_as $type$
+$parenexpr$ unsafe_as $type$
 
 bitcast: HIDELITERALS
-( $expr$ ) bit_as $type$
+$parenexpr$ bit_as $type$
 
 unusedcomma:
 ,
@@ -133,15 +133,15 @@ simplexpr: SIMPLIFY
 $sizeof$
 $constexpr$
 $freeze$
-$intrinsic$
-$intrinsic_v$
+$intrinsic$ #this guy
+$intrinsic_v$ #this guy
 $ternary$
 $cast$
 $unsafe_cast$
 $bitcast$
 $array_literal$
 $struct_literal$
-$rhunexpr$
+$rhunexpr$ #this guy
 $parenexpr$
 $float$
 $integer$
@@ -248,11 +248,8 @@ $supersimplexpr$ $rhunexpr_right$+
 statementlist: HIDELITERALS
 { $statement$* }
 
-binstateop:
-=
-
 binstate: HIDELITERALS
-$lvar$ $binstateop$ $expr$ ;
+$lvar$ = $expr$ ;
 
 funcarg:
 $type$ $name$

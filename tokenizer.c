@@ -8,7 +8,18 @@ typedef struct _Token {
     struct _Token * next;
     char * text;
     size_t len;
+    size_t line;
+    size_t column;
+    int form;
 } Token;
+
+uint8_t token_is_exact(Token * token, char * text)
+{
+    if (!token) return 0;
+    size_t len = strlen(text);
+    if (token->len != len) return 0;
+    return strncmp(token->text, text, len) == 0;
+}
 
 Token * add_token(Token * prev)
 {
@@ -84,7 +95,7 @@ size_t check_float_token(char * source)
     return 0;
 }
 
-size_t check_int_token(char * source)
+size_t check_int_token(char * source, uint8_t * is_untyped)
 {
     char * source_orig = source;
     uint8_t has_minus = 0;
@@ -100,7 +111,10 @@ size_t check_int_token(char * source)
     if (c0 != 'i' && c0 != 'u')
     {
         if (!has_minus)
-            return (size_t)(source - source_orig);
+        {
+            *is_untyped = 1;
+            return (size_t)(source - source_orig) - 1;
+        }
         return 0;
     }
     char c1 = *source++;
@@ -116,7 +130,7 @@ size_t check_int_token(char * source)
     return 0;
 }
 
-size_t check_hex_int_token(char * source)
+size_t check_hex_int_token(char * source, uint8_t * is_untyped)
 {
     char * source_orig = source;
     uint8_t has_minus = 0;
@@ -136,7 +150,10 @@ size_t check_hex_int_token(char * source)
     if (c0 != 'i' && c0 != 'u')
     {
         if (!has_minus)
-            return (size_t)(source - source_orig);
+        {
+            *is_untyped = 1;
+            return (size_t)(source - source_orig) - 1;
+        }
         return 0;
     }
     char c1 = *source++;
@@ -169,7 +186,7 @@ size_t check_string(char * source)
         }
         source++; // step over character
     }
-    if (*source != '"')
+    if (*source++ != '"')
         return 0;
     if (strncmp(source, "array_nonull", 12) == 0)
         return (size_t)(source - source_orig) + 12;
@@ -191,9 +208,28 @@ size_t check_char(char * source)
     if (c == '\\')
     {
         char c = *source++;
-        if (c != '\\' && c != '\\' && c != '\n' && c != '\r' && c != '\t')
+        // only these four characters are allowed after a \ in a char
+        if (c != '\\' && c != 'n' && c != 'r' && c != 't')
             return 0;
     }
+    if ((uint8_t)c >= 0xF0)
+    {
+        if ((uint8_t)*source > 0xBF || (uint8_t)*source++ < 0x80) return 0;
+        if ((uint8_t)*source > 0xBF || (uint8_t)*source++ < 0x80) return 0;
+        if ((uint8_t)*source > 0xBF || (uint8_t)*source++ < 0x80) return 0;
+    }
+    else if ((uint8_t)c >= 0xE0)
+    {
+        if ((uint8_t)*source > 0xBF || (uint8_t)*source++ < 0x80) return 0;
+        if ((uint8_t)*source > 0xBF || (uint8_t)*source++ < 0x80) return 0;
+    }
+    else if ((uint8_t)c >= 0xC0)
+    {
+        if ((uint8_t)*source > 0xBF || (uint8_t)*source++ < 0x80) return 0;
+    }
+    else if ((uint8_t)c >= 0x80)
+        return 0;
+    
     if (*source++ != '\'')
         return 0;
     if (strncmp(source, "u32", 3) == 0)
@@ -206,7 +242,6 @@ size_t check_name(char * source)
     char * source_orig = source;
     if (!is_name_start_char(*source++))
         return 0;
-    puts("wow! name start!!!");
     while (is_name_char(*source))
         source++;
     return (size_t)(source - source_orig);
@@ -231,23 +266,57 @@ size_t check_symbol(char * source)
     return 0;
 }
 
-size_t check_token(char * source)
+enum {
+    TOKEN_FORM_NONE = 0,
+    TOKEN_FORM_FLOAT,
+    TOKEN_FORM_INT,
+    TOKEN_FORM_INTTOKEN,
+    TOKEN_FORM_STRING,
+    TOKEN_FORM_CHAR,
+    TOKEN_FORM_NAME,
+    TOKEN_FORM_SIGIL,
+};
+
+size_t check_token(char * source, int * form)
 {
     size_t ret = 0;
     if ((ret = check_float_token(source)))
+    {
+        *form = TOKEN_FORM_FLOAT;
         return ret;
-    if ((ret = check_int_token(source)))
+    }
+    uint8_t is_suffixless = 0;
+    if ((ret = check_hex_int_token(source, &is_suffixless)))
+    {
+        *form = TOKEN_FORM_INT + is_suffixless;
         return ret;
-    if ((ret = check_hex_int_token(source)))
+    }
+    is_suffixless = 0;
+    if ((ret = check_int_token(source, &is_suffixless)))
+    {
+        *form = TOKEN_FORM_INT + is_suffixless;
         return ret;
+    }
     if ((ret = check_string(source)))
+    {
+        *form = TOKEN_FORM_STRING;
         return ret;
+    }
     if ((ret = check_char(source)))
+    {
+        *form = TOKEN_FORM_CHAR;
         return ret;
+    }
     if ((ret = check_name(source)))
+    {
+        *form = TOKEN_FORM_NAME;
         return ret;
+    }
     if ((ret = check_symbol(source)))
+    {
+        *form = TOKEN_FORM_SIGIL;
         return ret;
+    }
     return 0;
 }
 
@@ -275,7 +344,7 @@ void print_token(Token * token)
     puts("");
 }
 
-Token * tokenize(char * source)
+Token * tokenize(char * source, Token ** failed_last)
 {
     size_t sourcelen = 0;
     char * src2 = source;
@@ -284,31 +353,74 @@ Token * tokenize(char * source)
     
     Token * last = 0;
     
+    size_t lines = 1;
+    size_t columns = 1;
+    
     while (*source)
     {
         if (*source == '#'
          || strncmp(source, "//", 2) == 0)
         {
             while (*source != '\n' && *source != '\r' && *source != 0)
+            {
                 source++;
+                columns++;
+            }
+            continue;
+        }
+        if (strncmp(source, "/*", 2) == 0)
+        {
+            source++;
+            columns++;
+            do
+            {
+                source++;
+                columns++;
+                
+                if (*source == '\n')
+                {
+                    lines++;
+                    columns = 1;
+                }
+            } while (strncmp(source, "*/", 2) != 0 && *source != 0);
+            for (int i = 0; i < 2; i++)
+            {
+                source++;
+                columns++;
+                if (*source == '\n')
+                {
+                    lines++;
+                    columns = 1;
+                }
+            }
+            continue;
         }
         if (is_whitespace(*source))
         {
+            columns++;
+            if (*source == '\n')
+            {
+                lines++;
+                columns = 1;
+            }
             source++;
             continue;
         }
-        size_t len = check_token(source);
+        int form = 0;
+        size_t len = check_token(source, &form);
         if (len == 0)
         {
-            puts("no token");
+            *failed_last = last;
             break;
         }
-        puts("token!!!");
-        printf("%c\n", *source);
         last = add_token(last);
         last->text = source;
         last->len = len;
+        last->form = form;
+        last->line = lines;
+        last->column = columns;
         source += len;
+        columns += len;
     }
     
     Token * first = last;

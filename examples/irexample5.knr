@@ -1,0 +1,109 @@
+
+struct Vector3
+{
+    f64 x;
+    f64 y;
+    f64 z;
+}
+struct Vector3Holder
+{
+    Vector3 vec;
+}
+
+f64 fekf = 9152.0f64;
+void main()
+{
+    f64 myfloat = 12953.94193f64;
+    Vector3Holder holder2 = Vector3Holder { Vector3 { 1.52938f64 * myfloat, 0.0f64, 0.0f64 } };
+    print_float(holder2.vec.x);
+    array(Vector3, 1) holder = [ Vector3 { 1.52938f64 * myfloat, 0.0f64, 0.0f64 } ];
+    print_float(holder[0i64].x);
+    
+    print_float((194u64 >> 4u64) as f64);
+    print_float((-194i64 >> 4u64) as f64);
+    print_float((-1i64 >> 4u64) as f64);
+    print_float((-1i64 >> 400u64) as f64);
+    print_float((-1i64 >> 63u64) as f64);
+    print_float((-1i64 >> 64u64) as f64);
+    print_float((-1i64 >> 65u64) as f64);
+    print_float((-1i64 shr_unsafe 400u64) as f64); // poison
+    print_float((-1i64 shr_unsafe 63u64) as f64);
+    print_float((-1i64 shr_unsafe 64u64) as f64); // poison
+    print_float((-1i64 shr_unsafe 65u64) as f64); // poison
+    
+    print_float(((~0u8 ? 539u64 : 31u64)) as f64);
+    print_float((~0u8) as f64);
+    
+    f64 mydouble = 3.14159265358979f64;
+    print_fmt("a cute f64 float: %F\n", decay_to_ptr [(&mydouble) bit_as ptr(u8)]);
+    
+    f64 undef;
+    print_float(undef); // undefined
+    f64 frozen = freeze undef;
+    print_float(frozen);
+    
+    u8 sbuus = intrinsic abs_i8(-128i8);
+    print_float((sbuus) as f64);
+    u64 sbuus2 = intrinsic abs((0x8000000000000000u64) as i64);
+    u64 sbuus3 = intrinsic abs((0x9000000000000000u64) as i64);
+    u64 sbuus4 = intrinsic abs((0x7000000000000000u64) as i64);
+    print_fmt("%u\n", decay_to_ptr [(&sbuus2) as ptr(u8)]);
+    print_fmt("%u\n", decay_to_ptr [(&sbuus3) as ptr(u8)]);
+    print_fmt("%u\n", decay_to_ptr [(&sbuus4) as ptr(u8)]);
+    
+    print_float(intrinsic sin(0.5f64));
+    print_float(intrinsic cos(0.5f64));
+    print_float(intrinsic sign(0.0f64));
+    print_float(intrinsic sign(-0.0f64));
+    
+    print_float(intrinsic powi(1.4f64, 41i32));
+    print_float(intrinsic pow(2.4f64, 0.5f64));
+    print_float(intrinsic pow(-1.0f64, 0.5f64)); // NaN
+    print_float(intrinsic sqrt(-1.0f64)); // NaN
+    
+    print_float(intrinsic fmuladd(14.1f64, 0.5f64, 1000.0f64)); // 1007.05
+    
+    print_fmt("0x%X\n", decay_to_ptr [(&[0xBEEFu64]) as ptr(u8)]);
+    u64 aske = intrinsic rotr(0xBEEFu64, 8u64);
+    print_fmt("0x%X\n", decay_to_ptr [(&[(intrinsic rotr_u16(0xBEEFu16, 4u16)) as u64]) as ptr(u8)]);
+    print_fmt("0x%X\n", decay_to_ptr [(&[(intrinsic rotl_u16(0xBEEFu16, 4u16)) as u64]) as ptr(u8)]);
+    
+    array(f64, 2) agdk2 = [3.141f64, 3.141f64];
+    agdk2 = intrinsic_v 2 x f64 fmul(agdk2, [16.0f64, 16.0f64], 0u64);
+    print_float(agdk2[0i64]);
+    print_float(agdk2[1i64]);
+    
+    array(f64, 2) agdk = [3.141f64, 3.141f64];
+    f64 buhuh = intrinsic_v 2 x f64 fadd_reduce(40000.0f64, [3.14f64, 10.005f64], 3u64);
+    print_float(buhuh);
+    
+    print_float(fekf);
+    fekf = 5913.14530f64;
+    print_float(fekf);
+    
+    print_float(1.0e+1000f64);
+    print_float(1.0e+100f64);
+    print_float(((1.0e+100f64) as f32) as f64);
+    
+    print_float(1.0e+100f64 % 0.0f64);
+    print_float(0.0f64 % 0.0f64);
+    print_float((1052u64 % 0u64) as f64);
+    print_float((1052u64 / 0u64) as f64);
+    
+    print_float((0.1f32 + 0.2f32 + 0.000010f32) as f64);
+    print_float(((0.1f32 + 0.2f32) + 0.000010f32) as f64);
+    print_float((0.1f32 + (0.2f32 + 0.000010f32)) as f64);
+
+    // ptr(array(u8, 2)) myptr = &constexpr[0u8, 14u8]; // illegal
+    ptr(array(u8, 2)) myptr = &[0u8, 14u8];
+    
+    u16 myint = *((myptr) bit_as ptr(u16));
+    print_float((myint) as f64);
+    
+    (*myptr)[1i64] = 1u8; // non-constexpr temporary aggregates pointed to by valid pointers can be modified!
+    
+    myint = *((myptr) bit_as ptr(u16));
+    print_float((myint) as f64);
+    
+    return;
+}
