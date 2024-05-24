@@ -1,8 +1,8 @@
 constexpr i32 myglobal = 69i32 + 5i32;
 
-void main(i32 asdf2asdf)
+i32 main(i32 asdf2asdf)
 {
     i32 myvar;
     myvar = 510i32;
-    return;
+    return 91523i32;
 }

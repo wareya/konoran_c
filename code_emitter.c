@@ -17,14 +17,18 @@ enum {
     RDI,
 };
 
+uint8_t last_is_terminator = 0;
+
 void emit_ret(void)
 {
+    last_is_terminator = 1;
     byte_push(code, 0xC3);
 }
 void emit_sub_imm(int reg, int64_t val)
 {
     if (val == 0) // NOP
         return;
+    last_is_terminator = 0;
     assert(("negative or 64-bit immediate subtraction not yet supported", (val > 0 && val <= 2147483647)));
     byte_push(code, 0x48);
     if (reg == RAX && val > 0x7F)
@@ -49,6 +53,7 @@ void emit_add_imm(int reg, int64_t val)
 {
     if (val == 0) // NOP
         return;
+    last_is_terminator = 0;
     assert(("negative or 64-bit immediate addition not yet supported", (val > 0 && val <= 2147483647)));
     byte_push(code, 0x48);
     if (reg == RAX && val > 0x7F)
@@ -71,6 +76,7 @@ void emit_add_imm(int reg, int64_t val)
 }
 void emit_mov(int reg_d, int reg_s)
 {
+    last_is_terminator = 0;
     assert(reg_d < 8 && reg_s < 8);
 // 0:  48 89 c0                mov    rax,rax
 // 3:  48 89 c8                mov    rax,rcx
@@ -87,6 +93,7 @@ void emit_mov(int reg_d, int reg_s)
 // only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
 void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 {
+    last_is_terminator = 0;
 // 48 89 02                mov    QWORD PTR [rdx],rax
 // 48 89 10                mov    QWORD PTR [rax],rdx
 // 89 02                   mov    DWORD PTR [rdx],eax
@@ -122,6 +129,7 @@ void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 }
 void emit_push(int reg1)
 {
+    last_is_terminator = 0;
     if (reg1 == RAX)
         byte_push(code, 0x50);
     else if (reg1 == RDX)
@@ -140,6 +148,7 @@ void emit_push(int reg1)
 
 void emit_pop(int reg1)
 {
+    last_is_terminator = 0;
     if (reg1 == RAX)
         byte_push(code, 0x58);
     else if (reg1 == RDX)
@@ -158,6 +167,7 @@ void emit_pop(int reg1)
 // may clobber RAX if val doesn't fit in 32 bits
 void emit_push_val(int64_t val)
 {
+    last_is_terminator = 0;
     
 // 6a 00                            push   0x0
 // 6a 7f                            push   0x7f
@@ -189,6 +199,7 @@ void emit_push_val(int64_t val)
 }
 void emit_lea(int reg1, int reg2, int64_t offset)
 {
+    last_is_terminator = 0;
     assert(offset >= -2147483648 && offset <= 2147483647);
     assert(reg1 == RAX || reg1 == RDX);
     assert(reg2 == RBP || reg2 == RSP);

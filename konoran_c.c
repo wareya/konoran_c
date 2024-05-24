@@ -71,10 +71,12 @@ int main(int argc, char ** argv)
     
     uint32_t asdf = 91543;
     printf("%d\n", asdf);
-    
-    // data-to-funcpointer cast that bypasses GCC's non-posix-compatible data <-> func pointer casting warning in the `-pedantic` flag
-    int (* jit_func) (int);
-    *(void **)(&jit_func) = jit_code;
+
+// suppress wrong/non-posix GCC warning
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+    int (* jit_func) (int) = (int(*)(int)) jit_code;
+#pragma GCC diagnostic pop
     
     asdf = jit_func(152);
     

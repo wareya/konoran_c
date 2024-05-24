@@ -619,17 +619,17 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case STATEMENTLIST:
     {
-        enscope_locals();
-        
         Node * statement = ast->first_child;
-        assert(statement);
-        while (statement)
+        if (statement)
         {
-            compile_code(statement, 0);
-            statement = statement->next_sibling;
+            enscope_locals();
+            while (statement)
+            {
+                compile_code(statement, 0);
+                statement = statement->next_sibling;
+            }
+            unscope_locals();
         }
-        
-        unscope_locals();
     } break;
     case INTEGER:
     {
@@ -732,9 +732,13 @@ void compile_defs_compile(Node * ast)
             statement = statement->next_sibling;
         }
         
+        // ensure termination
+        assert(last_is_terminator);
+        /*
         emit_add_imm(RSP, stack_loc);
         emit_pop(RBP);
         emit_ret();
+        */
     } break;
     default: {}
     }
