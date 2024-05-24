@@ -62,6 +62,7 @@ int main(int argc, char ** argv)
         size_t global_data_len = 0;
         compile_program(root, &code);
     }
+    puts("compiled!!!");
     
     for (size_t i = 0; i < code->len; i++)
         printf("%02X ", code->data[i]);

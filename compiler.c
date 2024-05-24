@@ -107,7 +107,7 @@ uint8_t types_same(Type * a, Type * b)
     if (a->size != b->size || a->variant != b->variant || a->primitive_data != b->primitive_data || strcmp(a->name, b->name) != 0)
         return 0;
     puts("TODO compare types");
-    exit(-1);
+    assert(0);
 }
 
 Type * new_type(char * name, int variant)
@@ -123,7 +123,7 @@ Type * parse_type(Node * ast)
     if (!ast)
     {
         puts("broken type AST?");
-        exit(-1);
+        assert(0);
     }
     if (ast->type == TYPE)
         return parse_type(ast->first_child);
@@ -139,7 +139,7 @@ Type * parse_type(Node * ast)
         return outer;
     }
     printf("TODO: parse type variant %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
-    exit(-1);
+    assert(0);
 }
 
 Type * type_list = 0;
@@ -155,7 +155,7 @@ void add_type(Type * new_type)
     if (strcmp(last->name, new_type->name) == 0)
     {
         printf("Error: tried to redefine type %s!\n", last->name);
-        exit(-1);
+        assert(0);
     }
     while (last->next_type)
     {
@@ -163,7 +163,7 @@ void add_type(Type * new_type)
         if (strcmp(last->name, new_type->name) == 0)
         {
             printf("Error: tried to redefine type %s!\n", last->name);
-            exit(-1);
+            assert(0);
         }
     }
     
@@ -184,7 +184,7 @@ Type * add_primitive_type(char * name, int primitive_data)
     else
     {
         puts("Unknown primitive type used");
-        exit(-1);
+        assert(0);
     }
     add_type(type);
     return type;
@@ -266,7 +266,7 @@ Variable * add_global(char * name, Type * type)
         if (strcmp(last->name, name) == 0)
         {
             printf("Error: tried to redefine global %s!\n", last->name);
-            exit(-1);
+            assert(0);
         }
         if (!last->next_var)
             break;
@@ -331,22 +331,6 @@ StackItem * stack_pop(void)
 // x + 5
 // push x; push 5; pop r2; pop r1;
 
-void compile_infix_plus(StackItem * left, StackItem * right)
-{
-    assert(types_same(left->val->type, right->val->type));
-    if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
-    {
-        Value * value = new_value(left->val->type);
-        value->kind = VAL_CONSTANT;
-        value->_val = left->val->_val + right->val->_val;
-        printf("added value... %lld\n", value->_val);
-        stack_push_new(value);
-        return;
-    }
-    puts("TODO: vars not supported yet");
-    exit(-1);
-}
-
 typedef struct _FuncDef
 {
     char * name;
@@ -377,7 +361,7 @@ FuncDef * add_funcdef(char * name)
         if (strcmp(last->name, name) == 0)
         {
             printf("Error: tried to redefine global const %s!\n", last->name);
-            exit(-1);
+            assert(0);
         }
         if (!last->next)
             break;
@@ -440,7 +424,7 @@ void compile_defs_collect(Node * ast)
     case STRUCTDEF:
     {
         puts("TODO STRUCTDEF");
-        exit(-1);
+        assert(0);
     } break;
     default: {}
     }
@@ -470,7 +454,7 @@ Variable * add_local(char * name, Type * type)
         if (strcmp(last->name, name) == 0)
         {
             printf("Error: tried to redefine local %s!\n", last->name);
-            exit(-1);
+            assert(0);
         }
         if (!last->next_var)
             break;
@@ -544,6 +528,45 @@ void emit_push_val_safe(uint64_t val)
     stack_offset += 8;
 }
 
+void _push_small_if_const(Value * item)
+{
+    if (item->kind == VAL_CONSTANT)
+    {
+        assert(!item->mem);
+        assert(!item->loc);
+        assert(item->type->size <= 8);
+        emit_push_val_safe(item->_val);
+    }
+}
+
+void compile_infix_plus(StackItem * left, StackItem * right)
+{
+    // FIXME pointers use a different thing
+    assert(types_same(left->val->type, right->val->type));
+    if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
+    {
+        Value * value = new_value(left->val->type);
+        value->kind = VAL_CONSTANT;
+        value->_val = left->val->_val + right->val->_val;
+        printf("added value... %lld\n", value->_val);
+        stack_push_new(value);
+        return;
+    }
+    assert(left->val->kind != VAL_STACK_BOTTOM);
+    assert(right->val->kind != VAL_STACK_BOTTOM);
+    // addition is associative so it doesn't matter if we do this in the wrong order
+    _push_small_if_const(right->val);
+    _push_small_if_const(left->val);
+    emit_pop_safe(RDX);
+    emit_pop_safe(RAX);
+    emit_add(RAX, RDX);
+    emit_push_safe(RAX);
+    
+    Value * value = new_value(left->val->type);
+    value->kind = VAL_STACK_TOP;
+    stack_push_new(value);
+}
+
 Type * return_type = 0;
 
 void compile_code(Node * ast, int want_ptr)
@@ -560,13 +583,7 @@ void compile_code(Node * ast, int want_ptr)
             assert(return_type == get_type("void"));
         else
         {
-            if (expr->val->kind == VAL_CONSTANT)
-            {
-                // FIXME non-prim-sized types
-                assert(!expr->val->mem);
-                assert(!expr->val->loc);
-                emit_push_val_safe(expr->val->_val);
-            }
+            _push_small_if_const(expr->val);
             assert(return_type == expr->val->type);
             assert(return_type->size <= 8);
             emit_pop(RAX);
@@ -590,10 +607,14 @@ void compile_code(Node * ast, int want_ptr)
         // FIXME aggregates
         assert(var->val->type->size <= 8);
         
-        emit_mov_offset(RAX, RBP, -(var->val->loc + var->val->type->size));
+        emit_mov_offset(RAX, RBP, -var->val->loc, var->val->type->size);
         emit_push_safe(RAX);
         
-        stack_push_new(var->val);
+        Value * value = new_value(var->val->type);
+        value->kind = VAL_STACK_TOP;
+        
+        stack_push_new(value);
+        puts("asdfgioragoig");
     } break;
     case LVAR:
     {
@@ -609,7 +630,7 @@ void compile_code(Node * ast, int want_ptr)
         // FIXME aggregates
         assert(var->val->type->size <= 8);
         
-        emit_lea(RAX, RBP, -(var->val->loc + var->val->type->size));
+        emit_lea(RAX, RBP, -var->val->loc);
         emit_push_safe(RAX);
         
         stack_push_new(var->val);
@@ -641,13 +662,10 @@ void compile_code(Node * ast, int want_ptr)
         
         Value * expr = stack_pop()->val;
         Value * target = stack_pop()->val;
-        if (expr->kind == VAL_CONSTANT)
-        {
-            // FIXME non-prim-sized types
-            assert(!expr->mem);
-            assert(!expr->loc);
-            emit_push_val_safe(expr->_val);
-        }
+        
+        // FIXME non-prim-sized types
+        _push_small_if_const(expr);
+        
         // FIXME globals
         assert(target->kind == VAL_STACK_BOTTOM);
         assert(target);
@@ -723,12 +741,12 @@ void compile_code(Node * ast, int want_ptr)
         else
         {
             puts("TODO other infix ops");
-            exit(-1);
+            assert(0);
         }
     } break;
     default:
         printf("unhandled code AST node type %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
-        exit(-1);
+        assert(0);
     }
 }
 
@@ -824,7 +842,7 @@ Const * add_global_const(char * name, Type * type, uint64_t pos)
         if (strcmp(last->name, name) == 0)
         {
             printf("Error: tried to redefine global const %s!\n", last->name);
-            exit(-1);
+            assert(0);
         }
         if (!last->next)
             break;
@@ -867,12 +885,12 @@ void compile_globals_collect(Node * ast)
         if (code->len != code_start || val->val->kind != VAL_CONSTANT)
         {
             puts("Error: tried to assign non-const value to a global constant");
-            exit(-1);
+            assert(0);
         }
         if (val->val->type->size > 8)
         {
             puts("TODO: large consts");
-            exit(-1);
+            assert(0);
         }
         // FIXME: parse and verify type
         uint64_t loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
@@ -900,7 +918,7 @@ void compile_globals_collect(Node * ast)
         if (code->len != code_start)
             puts("TODO: store value");
         puts("TODO: store value");
-        exit(-1);
+        assert(0);
     } break;
     default: {}
     }
@@ -933,7 +951,7 @@ void compile(Node * ast)
     } break;
     default:
         printf("unhandled zeroth-level AST node type %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
-        exit(-1);
+        assert(0);
     }
 }
 
