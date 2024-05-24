@@ -71,9 +71,15 @@ int main(int argc, char ** argv)
     
     uint32_t asdf = 91543;
     printf("%d\n", asdf);
-    asdf = ((int(*)(int))(void *)jit_code)(152);
-    printf("%p\n", (void *)&asdf);
-    printf("%p\n", (void *)asdf);
+    
+    // data-to-funcpointer cast that bypasses GCC's non-posix-compatible data <-> func pointer casting warning in the `-pedantic` flag
+    int (* jit_func) (int);
+    *(void **)(&jit_func) = jit_code;
+    
+    asdf = jit_func(152);
+    
+    printf("%p\n", (void *)&asdf); // print address of asdf for comparison
+    printf("%p\n", (void *)(uint64_t)asdf); // print address asdf contains
     
     free_as_executable(jit_code);
     
