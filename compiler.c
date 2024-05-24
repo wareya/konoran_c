@@ -11,6 +11,8 @@ byte_buffer * code = 0;
 byte_buffer * static_data = 0;
 size_t global_data_len = 0;
 
+#include "code_emitter.c"
+
 size_t guess_alignment_from_size(size_t size)
 {
     size_t a = 1;
@@ -482,11 +484,20 @@ Variable * add_local(char * name, Type * type)
     
     return local;
 }
-void enscope_locals()
+
+Variable * get_local(Node * node)
+{
+    Variable * var = local_vars;
+    while (var && strncmp(var->name, node->text, node->textlen) != 0)
+        var = var->next_var;
+    return var;
+}
+
+void enscope_locals(void)
 {
     add_local(scope_guard_name, get_type("void"));
 }
-void unscope_locals()
+void unscope_locals(void)
 {
     if (local_vars && strcmp(local_vars->name, scope_guard_name) != 0)
         local_vars = local_vars->next_var;
@@ -506,20 +517,80 @@ void visit_ast(Node * node, Visitor visitor)
 uint8_t visitor_vars
 */
 
+// size of local vars etc
 size_t stack_loc = 0;
-size_t stack_size = 0;
+// size of temporary expression stuff pushed to the stack
+size_t stack_offset = 0;
 
-void compile_code(Node * ast)
+enum {
+    WANT_PTR_NONE,
+    WANT_PTR_REAL,
+    WANT_PTR_VIRTUAL,
+};
+
+void compile_code(Node * ast, int want_ptr)
 {
     switch (ast->type)
     {
+    case RETURN:
+    {
+        // FIXME handle properly
+        emit_ret();
+    } break;
+    case LVAR:
+    {
+        assert(want_ptr == WANT_PTR_VIRTUAL);
+        Variable * var = get_local(nth_child(ast, 0));
+        assert(var);
+        // FIXME globals
+        assert(var->val->kind == VAL_STACK_BOTTOM);
+        
+        emit_lea(RAX, RBP, -(var->val->loc + var->val->type->size));
+        emit_push(RAX);
+        
+        stack_push_new(var->val);
+    } break;
     case DECLARATION:
     {
-        compile_code(ast->first_child);
+        Type * type = parse_type(nth_child(ast, 0));
+        char * name = nth_child(ast, 1)->text;
+        
+        size_t align = guess_alignment_from_size(type->size);
+        stack_loc += type->size;
+        while (stack_loc % align)
+            stack_loc++;
+        
+        Variable * var = add_local(name, type);
+        var->val->kind = VAL_STACK_BOTTOM;
+        var->val->loc = stack_loc;
+        
+    } break;
+    case BINSTATE:
+    {
+        compile_code(nth_child(ast, 0), WANT_PTR_VIRTUAL);
+        compile_code(nth_child(ast, 1), 0);
+        
+        Value * expr = stack_pop()->val;
+        Value * target = stack_pop()->val;
+        if (expr->kind == VAL_CONSTANT)
+        {
+            // FIXME non-prim-sized types
+            assert(!expr->mem);
+            assert(!expr->loc);
+            emit_push_val(expr->_val);
+        }
+        // FIXME globals
+        assert(target->kind == VAL_STACK_BOTTOM);
+        assert(target);
+        assert(expr);
+        
+        emit_pop(RDX); // value into RDX
+        emit_pop(RAX); // destination location into RAX
+        emit_mov_preg_reg(RAX, RDX, expr->type->size);
     } break;
     case STATEMENT:
     {
-        compile_code(ast->first_child);
+        compile_code(ast->first_child, 0);
     } break;
     case STATEMENTLIST:
     {
@@ -529,7 +600,7 @@ void compile_code(Node * ast)
         assert(statement);
         while (statement)
         {
-            compile_code(statement);
+            compile_code(statement, 0);
             statement = statement->next_sibling;
         }
         
@@ -569,10 +640,10 @@ void compile_code(Node * ast)
     case BINEXPR_4:
     case BINEXPR_5:
     {
-        compile_code(nth_child(ast, 0));
+        compile_code(nth_child(ast, 0), 0);
         Node * op = nth_child(ast, 1);
         char * op_text = strcpy_len(op->text, op->textlen);
-        compile_code(nth_child(ast, 2));
+        compile_code(nth_child(ast, 2), 0);
         StackItem * expr_2 = stack_pop();
         StackItem * expr_1 = stack_pop();
         if (strcmp(op_text, "+") == 0)
@@ -609,34 +680,36 @@ void compile_defs_compile(Node * ast)
         GenericList * arg_name = funcdef->arg_names;
         while (arg)
         {
-            assert(arg);
-            assert(arg->item);
-            assert(arg_name);
-            assert(arg_name->item);
             Type * type = arg->item;
             size_t align = guess_alignment_from_size(type->size);
+            stack_loc += type->size;
             while (stack_loc % align)
                 stack_loc++;
             
-            add_local(arg_name->item, arg->item);
-            stack_loc += type->size;
+            Variable * var = add_local(arg_name->item, arg->item);
+            var->val->kind = VAL_STACK_BOTTOM;
+            var->val->loc = stack_loc;
+            
             
             arg_name = arg_name->next;
             arg = arg->next;
         }
         
-        stack_size = stack_loc;
+        emit_push(RBP);
+        emit_mov(RBP, RSP);
+        emit_sub_imm(RSP, stack_loc);
         
         Node * statement = nth_child(ast, 4)->first_child;
         assert(statement);
         while (statement)
         {
-            compile_code(statement);
+            compile_code(statement, 0);
             statement = statement->next_sibling;
         }
         
-        puts("TODO compile func");
-        exit(-1);
+        emit_add_imm(RSP, stack_loc);
+        emit_pop(RBP);
+        
     } break;
     default: {}
     }
@@ -714,7 +787,7 @@ void compile_globals_collect(Node * ast)
         assert(expr);
         
         size_t code_start = code->len;
-        compile_code(expr);
+        compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
         if (code->len != code_start || val->val->kind != VAL_CONSTANT)
@@ -747,7 +820,7 @@ void compile_globals_collect(Node * ast)
         assert(expr);
         
         size_t code_start = code->len;
-        compile_code(expr);
+        compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
         if (code->len != code_start)

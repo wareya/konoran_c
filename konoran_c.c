@@ -62,5 +62,9 @@ int main(int argc, char ** argv)
         compile_program(root, &code);
     }
     
+    for (size_t i = 0; i < code->len; i++)
+        printf("%02X ", code->data[i]);
+    puts("");
+    
     puts("exiting peacefully...");
 }
