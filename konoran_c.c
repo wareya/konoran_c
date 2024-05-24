@@ -6,6 +6,7 @@
 #include "tokenizer.c"
 #include "parser.c"
 #include "compiler.c"
+#include "jitify.c"
 
 int main(int argc, char ** argv)
 {
@@ -65,6 +66,16 @@ int main(int argc, char ** argv)
     for (size_t i = 0; i < code->len; i++)
         printf("%02X ", code->data[i]);
     puts("");
+    
+    uint8_t * jit_code = copy_as_executable(code->data, code->len);
+    
+    uint32_t asdf = 91543;
+    printf("%d\n", asdf);
+    asdf = ((int(*)(int))(void *)jit_code)(152);
+    printf("%p\n", (void *)&asdf);
+    printf("%p\n", (void *)asdf);
+    
+    free_as_executable(jit_code);
     
     puts("exiting peacefully...");
 }

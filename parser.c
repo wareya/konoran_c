@@ -9,11 +9,11 @@
 enum NodeType {
     GOODDUMMY,
     SIGIL,
-    FLOAT,
+    NFLOAT,
     INTEGER,
     INTEGER_TOKEN,
     STRING,
-    CHAR,
+    NCHAR,
     NAME,
     EMBEDNAME,
     RVAR_NAME,
@@ -246,7 +246,7 @@ Node * parse_as_token_form(Token * tokens, int form, Token ** next_tokens)
     {
         int type = GOODDUMMY;
         if (form == TOKEN_FORM_FLOAT)
-            type = FLOAT;
+            type = NFLOAT;
         else if (form == TOKEN_FORM_INT)
             type = INTEGER;
         else if (form == TOKEN_FORM_INTTOKEN)
@@ -254,7 +254,7 @@ Node * parse_as_token_form(Token * tokens, int form, Token ** next_tokens)
         else if (form == TOKEN_FORM_STRING)
             type = STRING;
         else if (form == TOKEN_FORM_CHAR)
-            type = CHAR;
+            type = NCHAR;
         else if (form == TOKEN_FORM_NAME)
             type = NAME;
         else if (form == TOKEN_FORM_SIGIL)
@@ -991,9 +991,9 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             (root = parse_as(tokens, STRUCT_LITERAL, &tokens)) ||
             (type == SIMPLEXPR && (root = parse_as(tokens, RHUNEXPR, &tokens))) ||
             (root = parse_as(tokens, PARENEXPR, &tokens)) ||
-            (root = parse_as(tokens, FLOAT, &tokens)) ||
+            (root = parse_as(tokens, NFLOAT, &tokens)) ||
             (root = parse_as(tokens, INTEGER, &tokens)) ||
-            (root = parse_as(tokens, CHAR, &tokens)) ||
+            (root = parse_as(tokens, NCHAR, &tokens)) ||
             (root = parse_as(tokens, STRING, &tokens)) ||
             (root = parse_as(tokens, RVAR_NAME, &tokens)))
             return (*next_tokens = tokens), root;
@@ -1315,14 +1315,14 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return (*next_tokens = tokens), root;
         return NULL;
     } break;
-    case FLOAT:
+    case NFLOAT:
     {
         Node * root = 0;
         if ((root = parse_as_token_form(tokens, TOKEN_FORM_FLOAT, &tokens)))
             return (*next_tokens = tokens), root;
         return NULL;
     } break;
-    case CHAR:
+    case NCHAR:
     {
         Node * root = 0;
         if ((root = parse_as_token_form(tokens, TOKEN_FORM_CHAR, &tokens)))

@@ -528,13 +528,31 @@ enum {
     WANT_PTR_VIRTUAL,
 };
 
+void emit_push_safe(int reg1)
+{
+    emit_push(reg1);
+    stack_offset += 8;
+}
+void emit_pop_safe(int reg1)
+{
+    emit_pop(reg1);
+    stack_offset -= 8;
+}
+void emit_push_val_safe(uint64_t val)
+{
+    emit_push_val(val);
+    stack_offset += 8;
+}
+
 void compile_code(Node * ast, int want_ptr)
 {
     switch (ast->type)
     {
     case RETURN:
     {
-        // FIXME handle properly
+        // FIXME handle return value properly
+        emit_add_imm(RSP, stack_loc);
+        emit_pop(RBP);
         emit_ret();
     } break;
     case LVAR:
@@ -546,19 +564,25 @@ void compile_code(Node * ast, int want_ptr)
         assert(var->val->kind == VAL_STACK_BOTTOM);
         
         emit_lea(RAX, RBP, -(var->val->loc + var->val->type->size));
-        emit_push(RAX);
+        
+        emit_push_safe(RAX);
         
         stack_push_new(var->val);
     } break;
     case DECLARATION:
     {
+        assert(stack_offset == 0);
+        
         Type * type = parse_type(nth_child(ast, 0));
         char * name = nth_child(ast, 1)->text;
         
         size_t align = guess_alignment_from_size(type->size);
+        uint64_t old_loc = stack_loc;
         stack_loc += type->size;
         while (stack_loc % align)
             stack_loc++;
+        
+        emit_sub_imm(RSP, stack_loc - old_loc);
         
         Variable * var = add_local(name, type);
         var->val->kind = VAL_STACK_BOTTOM;
@@ -577,15 +601,16 @@ void compile_code(Node * ast, int want_ptr)
             // FIXME non-prim-sized types
             assert(!expr->mem);
             assert(!expr->loc);
-            emit_push_val(expr->_val);
+            emit_push_val_safe(expr->_val);
         }
         // FIXME globals
         assert(target->kind == VAL_STACK_BOTTOM);
         assert(target);
         assert(expr);
         
-        emit_pop(RDX); // value into RDX
-        emit_pop(RAX); // destination location into RAX
+        emit_pop_safe(RDX); // value into RDX
+        emit_pop_safe(RAX); // destination location into RAX
+        
         emit_mov_preg_reg(RAX, RDX, expr->type->size);
     } break;
     case STATEMENT:
@@ -709,7 +734,7 @@ void compile_defs_compile(Node * ast)
         
         emit_add_imm(RSP, stack_loc);
         emit_pop(RBP);
-        
+        emit_ret();
     } break;
     default: {}
     }

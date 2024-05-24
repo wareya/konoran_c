@@ -10,14 +10,12 @@ mov r1 5; mov r2 5; add r1 r2; mov r2 5; mul r1 r2; push r1;
 
 
 
-push 5; push 5; pop r2; pop r1; add r1 r2; push r1; push 5; pop r2; pop r1; mul r1 r2; push r1;
-push 5; mov r2 5;       pop r1; add r1 r2; push r1; push 5; pop r2; pop r1; mul r1 r2; push r1;
-
-
 optimizations:
-- push n pop ra -> mov ra n
-- push rb pop ra -> mov ra rb
-- push ra pop ra -> <delete>
+- push n; pop ra -> mov ra n
+- push rb; pop ra -> mov ra rb
+- push ra; pop ra -> <delete>
 - push; mov -> mov; push (unrelated registers)
 - mov ra *rb; mov *rb ra -> <delete; dead load-store>
 - mov *rb ra; mov ra *rb -> mov *rb ra (redundant load)
+- sub ra n; sub ra m -> sub ra n+m
+- add ra n; add ra m -> add ra n+m
