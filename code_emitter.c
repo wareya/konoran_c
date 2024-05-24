@@ -197,6 +197,68 @@ void emit_push_val(int64_t val)
         byte_push(code, 0x50);
     }
 }
+void emit_mov_offset(int reg1, int reg2, int64_t offset)
+{
+    last_is_terminator = 0;
+    assert(offset >= -2147483648 && offset <= 2147483647);
+    assert(reg1 == RAX || reg1 == RDX);
+    assert(reg2 == RBP || reg2 == RSP);
+
+//  48 8b 04 24                mov    rax,QWORD PTR [rsp]
+//  48 8b 44 24 50             mov    rax,QWORD PTR [rsp+0x50]
+//  48 8b 84 24 20 03 00 00    mov    rax,QWORD PTR [rsp+0x320]
+    
+//  48 8b 14 24                mov    rdx,QWORD PTR [rsp]
+//  48 8b 54 24 50             mov    rdx,QWORD PTR [rsp+0x50]
+//  48 8b 94 24 20 03 00 00    mov    rdx,QWORD PTR [rsp+0x320]
+    
+//  48 8b 45 00                mov    rax,QWORD PTR [rbp+0x0]
+//  48 8b 45 50                mov    rax,QWORD PTR [rbp+0x50]
+//  48 8b 85 20 03 00 00       mov    rax,QWORD PTR [rbp+0x320]
+    
+//  48 8b 55 00                mov    rdx,QWORD PTR [rbp+0x0]
+//  48 8b 55 50                mov    rdx,QWORD PTR [rbp+0x50]
+//  48 8b 95 20 03 00 00       mov    rdx,QWORD PTR [rbp+0x320]
+
+    byte_push(code, 0x48);
+    byte_push(code, 0x8B);
+    
+    if (reg2 == RSP)
+    {
+        // special encoding for some reason
+        if (offset == 0)
+        {
+            byte_push(code, reg1 == RAX ? 0x04 : 0x14);
+            byte_push(code, 0x24);
+        }
+        else if (offset >= -128 && offset <= 127)
+        {
+            byte_push(code, reg1 == RAX ? 0x44 : 0x54);
+            byte_push(code, 0x24);
+            byte_push(code, (uint8_t)offset);
+        }
+        else
+        {
+            byte_push(code, reg1 == RAX ? 0x84 : 0x94);
+            byte_push(code, 0x24);
+            bytes_push_int(code, (uint64_t)offset, 4);
+        }
+    }
+    else // reg2 == RBP
+    {
+        if (offset >= -128 && offset <= 127)
+        {
+            byte_push(code, reg1 == RAX ? 0x45 : 0x55);
+            byte_push(code, (uint8_t)offset);
+        }
+        else
+        {
+            byte_push(code, reg1 == RAX ? 0x85 : 0x95);
+            bytes_push_int(code, (uint64_t)offset, 4);
+        }
+    }
+    
+}
 void emit_lea(int reg1, int reg2, int64_t offset)
 {
     last_is_terminator = 0;
@@ -243,6 +305,7 @@ void emit_lea(int reg1, int reg2, int64_t offset)
     
     if (reg2 == RSP)
     {
+        // special encoding for some reason
         if (offset == 0)
         {
             byte_push(code, reg1 == RAX ? 0x04 : 0x14);

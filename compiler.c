@@ -576,16 +576,40 @@ void compile_code(Node * ast, int want_ptr)
         emit_pop(RBP);
         emit_ret();
     } break;
-    case LVAR:
+    case RVAR_NAME:
     {
-        assert(want_ptr == WANT_PTR_VIRTUAL);
-        Variable * var = get_local(nth_child(ast, 0));
+        if (want_ptr != 0)
+        {
+            puts("TODO: rvar pointers");
+            exit(0);
+        }
+        Variable * var = get_local(ast);
         assert(var);
         // FIXME globals
         assert(var->val->kind == VAL_STACK_BOTTOM);
+        // FIXME aggregates
+        assert(var->val->type->size <= 8);
+        
+        emit_mov_offset(RAX, RBP, -(var->val->loc + var->val->type->size));
+        emit_push_safe(RAX);
+        
+        stack_push_new(var->val);
+    } break;
+    case LVAR:
+    {
+        compile_code(ast->first_child, WANT_PTR_VIRTUAL);
+    } break;
+    case LVAR_NAME:
+    {
+        assert(want_ptr == WANT_PTR_VIRTUAL);
+        Variable * var = get_local(ast);
+        assert(var);
+        // FIXME globals
+        assert(var->val->kind == VAL_STACK_BOTTOM);
+        // FIXME aggregates
+        assert(var->val->type->size <= 8);
         
         emit_lea(RAX, RBP, -(var->val->loc + var->val->type->size));
-        
         emit_push_safe(RAX);
         
         stack_push_new(var->val);

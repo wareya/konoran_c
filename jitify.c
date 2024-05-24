@@ -8,7 +8,7 @@
 
 uint8_t * copy_as_executable(uint8_t * mem, size_t len)
 {
-    void * const buffer = VirtualAlloc(NULL, len, MEM_COMMIT, PAGE_READWRITE);
+    void * const buffer = VirtualAlloc(0, len, MEM_COMMIT, PAGE_READWRITE);
     
     printf("0x%llX\n", (uint64_t)buffer);
     
