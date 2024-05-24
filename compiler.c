@@ -544,13 +544,34 @@ void emit_push_val_safe(uint64_t val)
     stack_offset += 8;
 }
 
+Type * return_type = 0;
+
 void compile_code(Node * ast, int want_ptr)
 {
     switch (ast->type)
     {
     case RETURN:
     {
-        // FIXME handle return value properly
+        if (ast->first_child)
+            compile_code(ast->first_child, 0);
+        
+        StackItem * expr = stack_pop();
+        if (!expr)
+            assert(return_type == get_type("void"));
+        else
+        {
+            if (expr->val->kind == VAL_CONSTANT)
+            {
+                // FIXME non-prim-sized types
+                assert(!expr->val->mem);
+                assert(!expr->val->loc);
+                emit_push_val_safe(expr->val->_val);
+            }
+            assert(return_type == expr->val->type);
+            assert(return_type->size <= 8);
+            emit_pop(RAX);
+        }
+        
         emit_add_imm(RSP, stack_loc);
         emit_pop(RBP);
         emit_ret();
@@ -701,6 +722,7 @@ void compile_defs_compile(Node * ast)
         
         stack_loc = 0;
         
+        return_type = funcdef->signature->item;
         GenericList * arg = funcdef->signature->next;
         GenericList * arg_name = funcdef->arg_names;
         while (arg)
@@ -714,7 +736,6 @@ void compile_defs_compile(Node * ast)
             Variable * var = add_local(arg_name->item, arg->item);
             var->val->kind = VAL_STACK_BOTTOM;
             var->val->loc = stack_loc;
-            
             
             arg_name = arg_name->next;
             arg = arg->next;

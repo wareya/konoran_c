@@ -80,8 +80,8 @@ int main(int argc, char ** argv)
     
     asdf = jit_func(152);
     
-    printf("%p\n", (void *)&asdf); // print address of asdf for comparison
-    printf("%p\n", (void *)(uint64_t)asdf); // print address asdf contains
+    printf("%d\n", asdf);
+    puts("whee!");
     
     free_as_executable(jit_code);
     

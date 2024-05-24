@@ -838,12 +838,12 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             if (!(does_parse_as_text(tokens, ";", &tokens)))
                 return free_node(&child_1), NULL;
             Node * root = add_node(RETURN);
+            insert_node(child_1, root);
             return (*next_tokens = tokens), root;
         }
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return NULL;
         Node * root = add_node(RETURN);
-        insert_node(child_1, root);
         return (*next_tokens = tokens), root;
     } break;
     case LVAR:

@@ -4,5 +4,5 @@ i32 main(i32 asdf2asdf)
 {
     i32 myvar;
     myvar = 510i32;
-    return 91523i32;
+    return 42069i32;
 }
