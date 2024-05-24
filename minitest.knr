@@ -1,0 +1,9 @@
+constexpr i32 myglobal = 69i32 + 5i32;
+
+void main(i32 asdf2asdf)
+{
+    //myglobal = 9143i32;
+    i32 myvar;
+    myvar = 0i32;
+    return;
+}

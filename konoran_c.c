@@ -5,6 +5,7 @@
 
 #include "tokenizer.c"
 #include "parser.c"
+#include "compiler.c"
 
 int main(int argc, char ** argv)
 {
@@ -33,15 +34,6 @@ int main(int argc, char ** argv)
     {
         printf("tokenizer failed! got to line %lld column %lld\n", failed_last->line, failed_last->column + failed_last->len);
     }
-    //Token * tokens = tokenize("i32 asdf; struct Vec2 { f32 x; f32 y; }");
-    
-    //Token * asdf = tokenize("9143.193f64 143.f64  .143f64");
-    //Token * asdf = tokens;
-    //while (asdf)
-    //{
-    //    print_token(asdf);
-    //    asdf = asdf->next;
-    //}
     
     Token * unparsed_tokens = 0;
     Node * root = parse_as(tokens, PROGRAM, &unparsed_tokens);
@@ -51,17 +43,23 @@ int main(int argc, char ** argv)
     {
         printf("unfinished parse; good parse section ended at line %lld column %lld\n", unparsed_tokens->line, unparsed_tokens->column);
         printf("(got to line %lld column %lld)\n", furthest_ever_parse_line, furthest_ever_parse_column);
+        
+        Token * asdf = furthest_ever_parse_token;
+        int i = 16;
+        while (asdf && i > 0)
+        {
+            print_token(asdf);
+            asdf = asdf->next;
+            i--;
+        }
     }
     else
-        printf("finished parse! %lld\n", (uint64_t)root);
-    
-    Token * asdf = furthest_ever_parse_token;
-    int i = 16;
-    while (asdf && i > 0)
     {
-        print_token(asdf);
-        asdf = asdf->next;
-        i--;
+        printf("finished parse! %lld\n", (uint64_t)root);
+        byte_buffer * code = 0;
+        byte_buffer * static_data = 0;
+        size_t global_data_len = 0;
+        compile_program(root, &code);
     }
     
     puts("exiting peacefully...");
