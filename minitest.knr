@@ -5,6 +5,6 @@ i32 main()//i32 asdf2asdf)
     i32 myvar;
     myvar = 510i32;
     myvar = myvar + 194i32;
-    //myvar = myvar;
+    myvar = *&myvar;
     return myvar;
 }

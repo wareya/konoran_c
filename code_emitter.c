@@ -102,6 +102,7 @@ void emit_mov(int reg_d, int reg_s)
 void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
+    
 // 48 89 02                mov    QWORD PTR [rdx],rax
 // 48 89 10                mov    QWORD PTR [rax],rdx
 // 89 02                   mov    DWORD PTR [rdx],eax
@@ -133,6 +134,44 @@ void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
     if (preg_d == RDX && reg_s == RAX)
         byte_push(code, 0x02);
     else if (preg_d == RAX && reg_s == RDX)
+        byte_push(code, 0x10);
+}
+// only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
+void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
+{
+    last_is_terminator = 0;
+    
+// 48 8b 02                mov    rax,QWORD PTR [rdx]
+// 48 8b 10                mov    rdx,QWORD PTR [rax]
+// 8b 02                   mov    eax,DWORD PTR [rdx]
+// 8b 10                   mov    edx,DWORD PTR [rax]
+// 66 8b 02                mov    ax,WORD PTR [rdx]
+// 66 8b 10                mov    dx,WORD PTR [rax]
+// 8a 02                   mov    al,BYTE PTR [rdx]
+// 8a 10                   mov    dl,BYTE PTR [rax]
+    
+    assert(preg_s == RAX || preg_s == RDX);
+    assert(reg_d == RAX || reg_d == RDX);
+    assert(preg_s != reg_d);
+    assert(size == 1 || size == 2 || size == 4 || size == 8);
+    if (size == 8)
+    {
+        byte_push(code, 0x48);
+        byte_push(code, 0x8b);
+    }
+    else if (size == 4)
+        byte_push(code, 0x8b);
+    else if (size == 2)
+    {
+        byte_push(code, 0x66);
+        byte_push(code, 0x8b);
+    }
+    else
+        byte_push(code, 0x8a);
+    
+    if (reg_d == RAX && preg_s == RDX)
+        byte_push(code, 0x02);
+    else if (reg_d == RDX && preg_s == RAX)
         byte_push(code, 0x10);
 }
 void emit_push(int reg1)

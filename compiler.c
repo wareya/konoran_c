@@ -91,7 +91,7 @@ typedef struct _Type
     char * name;
     size_t size;
     int variant; // for all
-    int primitive_data; // for primitives
+    int primitive_type; // for primitives
     struct _Type * inner_type; // for pointers and arrays
     uint64_t inner_count; // for arrays
     StructData * struct_data; // for structs
@@ -104,7 +104,7 @@ uint8_t types_same(Type * a, Type * b)
 {
     if (a == b)
         return 1;
-    if (a->size != b->size || a->variant != b->variant || a->primitive_data != b->primitive_data || strcmp(a->name, b->name) != 0)
+    if (a->size != b->size || a->variant != b->variant || a->primitive_type != b->primitive_type || strcmp(a->name, b->name) != 0)
         return 0;
     puts("TODO compare types");
     assert(0);
@@ -116,6 +116,14 @@ Type * new_type(char * name, int variant)
     type->name = name;
     type->variant = variant;
     return type;
+}
+
+Type * make_ptr_type(Type * inner)
+{
+    Type * outer = new_type("ptr", TYPE_POINTER);
+    outer->inner_type = inner;
+    outer->size = 8;
+    return outer;
 }
 
 Type * parse_type(Node * ast)
@@ -132,12 +140,7 @@ Type * parse_type(Node * ast)
         //return get_type_from_ast(ast->first_child ? ast->first_child : ast);
         //return get_type_from_ast(ast->first_child);
     if (ast->type == PTR_TYPE)
-    {
-        Type * inner = parse_type(ast->first_child);
-        Type * outer = new_type("ptr", TYPE_POINTER);
-        outer->inner_type = inner;
-        return outer;
-    }
+        return make_ptr_type(parse_type(ast->first_child));
     printf("TODO: parse type variant %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
     assert(0);
 }
@@ -169,17 +172,17 @@ void add_type(Type * new_type)
     
     last->next_type = new_type;
 }
-Type * add_primitive_type(char * name, int primitive_data)
+Type * add_primitive_type(char * name, int primitive_type)
 {
     Type * type = new_type(name, TYPE_PRIMITIVE);
-    type->primitive_data = primitive_data;
-    if (primitive_data == PRIM_VOID)
+    type->primitive_type = primitive_type;
+    if (primitive_type == PRIM_VOID)
         type->size = 0;
-    else if (primitive_data >= PRIM_U8 && primitive_data <= PRIM_I64)
-        type->size = 1 << ((primitive_data - PRIM_U8)/2);
-    else if (primitive_data == PRIM_F32)
+    else if (primitive_type >= PRIM_U8 && primitive_type <= PRIM_I64)
+        type->size = 1 << ((primitive_type - PRIM_U8)/2);
+    else if (primitive_type == PRIM_F32)
         type->size = 4;
-    else if (primitive_data == PRIM_F64)
+    else if (primitive_type == PRIM_F64)
         type->size = 8;
     else
     {
@@ -210,6 +213,13 @@ Type * get_type(char * name)
 enum { // kind
     VAL_INVALID = 0,
     VAL_CONSTANT,
+    //VAL_CONSTANTPTR,
+    //VAL_GLOBALPTR,
+    // - a pointer to a constant in static memory
+    // -- stored in loc
+    // - a reference to mutable global memory
+    // -- stored in loc
+    // FIXME design confusion
     VAL_STACK_BOTTOM,
     VAL_STACK_TOP,
 };
@@ -218,9 +228,12 @@ typedef struct _Value
 {
     Type * type;
     // A value can be:
-    // - a constant (a reference to a static memory location; OR a trivially-sized value)
+    // - a constant (a pointer to mid-compilation memory; OR a trivially-sized value)
+    // -- stored in mem OR _val
     // - a reference offset from the bottom of the stack (for variables and anonymous local storage)
+    // -- stored in loc
     // - a reference to the top of the stack (exactly, no offset) (must be consumed in reverse order)
+    // -- stored in loc
     uint64_t _val; // only for primitive constants (i64 literals etc)
     uint64_t loc; // memory location of an in-static-memory constant value or offset from bottom of stack
     uint8_t * mem; // pointer to non-static const (not yet stored in static memory) (null if stored in static memory)
@@ -541,7 +554,11 @@ void _push_small_if_const(Value * item)
 
 void compile_infix_plus(StackItem * left, StackItem * right)
 {
-    // FIXME pointers use a different thing
+    if (left->val->type->variant == TYPE_POINTER)
+    {
+        assert(right->val->type->primitive_type == PRIM_U64);
+        left->val->type = right->val->type;
+    }
     assert(types_same(left->val->type, right->val->type));
     if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
     {
@@ -565,6 +582,17 @@ void compile_infix_plus(StackItem * left, StackItem * right)
     Value * value = new_value(left->val->type);
     value->kind = VAL_STACK_TOP;
     stack_push_new(value);
+}
+
+
+void compile_code(Node * ast, int want_ptr);
+
+void compile_unary_addrof(Node * ast)
+{
+    compile_code(nth_child(ast, 1), WANT_PTR_REAL);
+    StackItem * inspect = stack_pop();
+    assert(inspect->val->type->variant == TYPE_POINTER);
+    stack_push(inspect);
 }
 
 Type * return_type = 0;
@@ -595,11 +623,6 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case RVAR_NAME:
     {
-        if (want_ptr != 0)
-        {
-            puts("TODO: rvar pointers");
-            exit(0);
-        }
         Variable * var = get_local(ast);
         assert(var);
         // FIXME globals
@@ -607,10 +630,17 @@ void compile_code(Node * ast, int want_ptr)
         // FIXME aggregates
         assert(var->val->type->size <= 8);
         
-        emit_mov_offset(RAX, RBP, -var->val->loc, var->val->type->size);
+        Type * type = var->val->type;
+        if (want_ptr != 0)
+        {
+            type = make_ptr_type(type);
+            emit_lea(RAX, RBP, -var->val->loc);
+        }
+        else
+            emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
         emit_push_safe(RAX);
         
-        Value * value = new_value(var->val->type);
+        Value * value = new_value(type);
         value->kind = VAL_STACK_TOP;
         
         stack_push_new(value);
@@ -663,7 +693,7 @@ void compile_code(Node * ast, int want_ptr)
         Value * expr = stack_pop()->val;
         Value * target = stack_pop()->val;
         
-        // FIXME non-prim-sized types
+        // will always be primitive-sized because it's a pointer
         _push_small_if_const(expr);
         
         // FIXME globals
@@ -671,6 +701,7 @@ void compile_code(Node * ast, int want_ptr)
         assert(target);
         assert(expr);
         
+        // FIXME non-prim-sized types
         emit_pop_safe(RDX); // value into RDX
         emit_pop_safe(RAX); // destination location into RAX
         
@@ -721,6 +752,48 @@ void compile_code(Node * ast, int want_ptr)
         
         stack_push_new(value);
     } break;
+    case UNARY:
+    {
+        Node * op = nth_child(ast, 0);
+        char * op_text = strcpy_len(op->text, op->textlen);
+        if (strcmp(op_text, "&") == 0)
+            compile_unary_addrof(ast);
+        else
+        {
+            compile_code(nth_child(ast, 1), 0);
+            StackItem * val = stack_pop();
+            if (strcmp(op_text, "+") == 0)
+            {
+                assert(val->val->type->variant == TYPE_PRIMITIVE);
+                assert(val->val->type->primitive_type >= PRIM_U8);
+                assert(val->val->type->primitive_type <= PRIM_F64);
+                stack_push(val);
+            }
+            else if (strcmp(op_text, "*") == 0)
+            {
+                assert(val->val->type->variant == TYPE_POINTER);
+                Type * new_type = val->val->type->inner_type;
+                assert(new_type->size <= 8);
+                
+                if (val->val->kind == VAL_STACK_TOP)
+                {
+                    emit_pop_safe(RDX);
+                    emit_mov_reg_preg(RAX, RDX, new_type->size);
+                    emit_push_safe(RAX);
+                    Value * value = new_value(new_type);
+                    value->kind = VAL_STACK_TOP;
+                    stack_push_new(value);
+                }
+                else
+                    assert(("TODO: deref non stack top pointers", 0));
+            }
+            else
+            {
+                puts("TODO other infix ops");
+                assert(0);
+            }
+        }
+    } break;
     case BINEXPR_0:
     case BINEXPR_1:
     case BINEXPR_2:
@@ -735,9 +808,7 @@ void compile_code(Node * ast, int want_ptr)
         StackItem * expr_2 = stack_pop();
         StackItem * expr_1 = stack_pop();
         if (strcmp(op_text, "+") == 0)
-        {
             compile_infix_plus(expr_1, expr_2);
-        }
         else
         {
             puts("TODO other infix ops");
