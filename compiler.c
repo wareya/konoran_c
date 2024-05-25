@@ -552,32 +552,158 @@ void _push_small_if_const(Value * item)
     }
 }
 
-void compile_infix_plus(StackItem * left, StackItem * right)
+// ops that output the same type that they're given as input
+void compile_infix_basic(StackItem * left, StackItem * right, char op)
 {
     if (left->val->type->variant == TYPE_POINTER)
     {
         assert(right->val->type->primitive_type == PRIM_U64);
         left->val->type = right->val->type;
+        assert(("TODO: impl + for pointers", 0));
+        return;
     }
     assert(types_same(left->val->type, right->val->type));
+    
+    size_t size = left->val->type->size;
+    uint8_t is_int = left->val->type->primitive_type >= PRIM_U8 && left->val->type->primitive_type <= PRIM_I64;
+    uint8_t is_float = left->val->type->primitive_type >= PRIM_F32;
+    uint8_t int_signed = left->val->type->primitive_type % 2;
+    
     if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
     {
         Value * value = new_value(left->val->type);
         value->kind = VAL_CONSTANT;
-        value->_val = left->val->_val + right->val->_val;
-        printf("added value... %lld\n", value->_val);
+        if (is_int)
+        {
+            uint64_t masks[] = {0xFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF};
+            uint64_t size_mask = masks[size];
+            
+            left->val->_val &= size_mask;
+            right->val->_val &= size_mask;
+            
+            if (op == '+')
+                value->_val = left->val->_val + right->val->_val;
+            else if (op == '-')
+                value->_val = left->val->_val - right->val->_val;
+            else if (op == '*')
+                value->_val = left->val->_val * right->val->_val;
+            else if (op == '/' || op == 'd')
+            {
+                if (right->val->_val != 0)
+                {
+                    if (int_signed)
+                    {
+                        if (size == 1)
+                            value->_val = (int8_t)left->val->_val / (int8_t)right->val->_val;
+                        else if (size == 2)
+                            value->_val = (int16_t)left->val->_val / (int16_t)right->val->_val;
+                        else if (size == 4)
+                            value->_val = (int32_t)left->val->_val / (int32_t)right->val->_val;
+                        else if (size == 8)
+                            value->_val = (int64_t)left->val->_val / (int64_t)right->val->_val;
+                        else
+                            assert(0);
+                    }
+                    else
+                        value->_val = left->val->_val / right->val->_val;
+                }
+                else
+                    value->_val = 0;
+            }
+            else if (op == '%' || op == 'r')
+            {
+                if (right->val->_val != 0)
+                {
+                    if (int_signed)
+                    {
+                        if (size == 1)
+                            value->_val = (int8_t)left->val->_val / (int8_t)right->val->_val;
+                        else if (size == 2)
+                            value->_val = (int16_t)left->val->_val % (int16_t)right->val->_val;
+                        else if (size == 4)
+                            value->_val = (int32_t)left->val->_val % (int32_t)right->val->_val;
+                        else if (size == 8)
+                            value->_val = (int64_t)left->val->_val % (int64_t)right->val->_val;
+                        else
+                            assert(0);
+                    }
+                    else
+                        value->_val = left->val->_val % right->val->_val;
+                }
+                else
+                    value->_val = 0;
+            }
+            else if (op == '&')
+                value->_val = left->val->_val & right->val->_val;
+            else if (op == '|')
+                value->_val = left->val->_val | right->val->_val;
+            else if (op == '^')
+                value->_val = left->val->_val ^ right->val->_val;
+            
+            value->_val &= size_mask;
+        }
+        else if (is_float)
+        {
+            assert(("float ops not implemented yet!", 0));
+        }
         stack_push_new(value);
         return;
     }
-    assert(left->val->kind != VAL_STACK_BOTTOM);
-    assert(right->val->kind != VAL_STACK_BOTTOM);
-    // addition is associative so it doesn't matter if we do this in the wrong order
-    _push_small_if_const(right->val);
-    _push_small_if_const(left->val);
-    emit_pop_safe(RDX);
-    emit_pop_safe(RAX);
-    emit_add(RAX, RDX);
-    emit_push_safe(RAX);
+    assert(left->val->kind == VAL_STACK_TOP || left->val->kind == VAL_CONSTANT);
+    assert(right->val->kind == VAL_STACK_TOP || right->val->kind == VAL_CONSTANT);
+    
+    if (is_int)
+    {
+        _push_small_if_const(right->val);
+        emit_pop_safe(RDX);
+        _push_small_if_const(left->val);
+        emit_pop_safe(RAX);
+        
+        if (op == '+')
+        {
+            emit_add(RAX, RDX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == '-')
+        {
+            emit_sub(RAX, RDX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == '*')
+        {
+            emit_mul(RDX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == 'd' || op == 'r')
+        {
+            emit_mov(RDI, RDX);
+            emit_xor(RDX, RDX, size);
+            if (op == 'd' && int_signed)
+            {
+                emit_idiv(RDI, size);
+                emit_push_safe(RAX);
+            }
+            else if (op == 'd')
+            {
+                emit_div(RDI, size);
+                emit_push_safe(RAX);
+            }
+            else if (op == 'r' && int_signed)
+            {
+                emit_idiv(RDX, size);
+                emit_push_safe(RDX);
+            }
+            else if (op == 'r')
+            {
+                emit_idiv(RDX, size);
+                emit_push_safe(RDX);
+            }
+        }
+        else
+            assert(("other ops not implemented yet!", 0));
+    }
+    
+    
     
     Value * value = new_value(left->val->type);
     value->kind = VAL_STACK_TOP;
@@ -593,6 +719,13 @@ void compile_unary_addrof(Node * ast)
     StackItem * inspect = stack_pop();
     assert(inspect->val->type->variant == TYPE_POINTER);
     stack_push(inspect);
+}
+void compile_unary_plus(StackItem * val)
+{
+    assert(val->val->type->variant == TYPE_PRIMITIVE);
+    assert(val->val->type->primitive_type >= PRIM_U8);
+    assert(val->val->type->primitive_type <= PRIM_F64);
+    stack_push(val);
 }
 
 Type * return_type = 0;
@@ -763,12 +896,7 @@ void compile_code(Node * ast, int want_ptr)
             compile_code(nth_child(ast, 1), 0);
             StackItem * val = stack_pop();
             if (strcmp(op_text, "+") == 0)
-            {
-                assert(val->val->type->variant == TYPE_PRIMITIVE);
-                assert(val->val->type->primitive_type >= PRIM_U8);
-                assert(val->val->type->primitive_type <= PRIM_F64);
-                stack_push(val);
-            }
+                compile_unary_plus(val);
             else if (strcmp(op_text, "*") == 0)
             {
                 assert(val->val->type->variant == TYPE_POINTER);
@@ -807,8 +935,18 @@ void compile_code(Node * ast, int want_ptr)
         compile_code(nth_child(ast, 2), 0);
         StackItem * expr_2 = stack_pop();
         StackItem * expr_1 = stack_pop();
-        if (strcmp(op_text, "+") == 0)
-            compile_infix_plus(expr_1, expr_2);
+        if (strcmp(op_text, "+") == 0
+         || strcmp(op_text, "-") == 0
+         || strcmp(op_text, "*") == 0
+         || strcmp(op_text, "/") == 0
+         || strcmp(op_text, "%") == 0
+         || strcmp(op_text, "div_unsafe") == 0
+         || strcmp(op_text, "rem_unsafe") == 0
+         || strcmp(op_text, "|") == 0
+         || strcmp(op_text, "&") == 0
+         || strcmp(op_text, "^") == 0
+        )
+            compile_infix_basic(expr_1, expr_2, op_text[0]);
         else
         {
             puts("TODO other infix ops");

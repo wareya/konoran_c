@@ -75,13 +75,81 @@ void emit_add_imm(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
-void emit_add(int reg_d, int reg_s)
+
+#define EMIT_LEN_PREFIX(reg_d, reg_s) \
+    if (size == 8) \
+        byte_push(code, 0x48); \
+    else if (size == 2) \
+        byte_push(code, 0x66); \
+    else if (size == 1 && (reg_d >= RSP || reg_s >= RSP)) \
+        byte_push(code, 0x40);
+
+void emit_add(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
-    byte_push(code, 0x48);
-    byte_push(code, 0x01);
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    byte_push(code, (size > 1) ? 0x01 : 0x00);
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
 }
+void emit_sub(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    byte_push(code, (size > 1) ? 0x29 : 0x28);
+    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+}
+void emit_xor(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    byte_push(code, (size > 1) ? 0x31 : 0x30);
+    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+}
+void emit_and(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    byte_push(code, (size > 1) ? 0x21 : 0x20);
+    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+}
+void emit_or(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    byte_push(code, (size > 1) ? 0x09 : 0x08);
+    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+}
+
+void emit_mul(int reg, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, (size > 1) ? 0xF7 : 0xF6);
+    byte_push(code, 0xE0 | reg);
+}
+void emit_div(int reg, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, (size > 1) ? 0xF7 : 0xF6);
+    byte_push(code, 0xF0 | reg);
+}
+void emit_idiv(int reg, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, (size > 1) ? 0xF7 : 0xF6);
+    byte_push(code, 0xF8 | reg);
+}
+
 void emit_mov(int reg_d, int reg_s)
 {
     last_is_terminator = 0;
@@ -260,7 +328,9 @@ void emit_mov_offset(int reg1, int reg2, int64_t offset, size_t size)
 //  48 8b 54 24 50             mov    rdx,QWORD PTR [rsp+0x50]
 //  48 8b 94 24 20 03 00 00    mov    rdx,QWORD PTR [rsp+0x320]
 
+//  48 8b 04 24                mov    rax,QWORD PTR [rsp+0x0]
 //  48 8b 45 00                mov    rax,QWORD PTR [rbp+0x0]
+//  48 8b 44 24 50             mov    rax,QWORD PTR [rsp+0x50]
 //  48 8b 45 50                mov    rax,QWORD PTR [rbp+0x50]
 //  48 8b 85 20 03 00 00       mov    rax,QWORD PTR [rbp+0x320]
 
