@@ -161,8 +161,31 @@ void emit_jmp_cond_long(char * label, size_t num, int cond)
     byte_push(code, 0xFF);
     byte_push(code, 0x7F);
 }
+void emit_nop(size_t len)
+{
+    last_is_terminator = 0;
+    if (len == 1)
+        byte_push(code, 0x90);
+    else if (len == 2)
+    {
+        byte_push(code, 0x66);
+        byte_push(code, 0x90);
+    }
+    else if (len == 3)
+    {
+        byte_push(code, 0x0F);
+        byte_push(code, 0x1F);
+        byte_push(code, 0x00);
+    }
+    else
+        assert(("tried to build nop of unsupported length", 0));
+}
+
 void emit_label(char * label, size_t num)
 {
+    // align in a way that's good for instruction decoding
+    //if (code->len % 16 > 12)
+    //    emit_nop(16 - (code->len % 16));
     last_is_terminator = 0;
     log_label(label, num, code->len);
 }
@@ -292,9 +315,12 @@ void emit_idiv(int reg, size_t size)
     emit_mullike(reg, size, 0xF8);
 }
 
-void emit_mov(int reg_d, int reg_s)
+void emit_mov(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
+    
+    emit_addlike(reg_d, reg_s, size, 0x88);
+    /*
     assert(reg_d < 8 && reg_s < 8);
 // 0:  48 89 c0                mov    rax,rax
 // 3:  48 89 c8                mov    rax,rcx
@@ -306,6 +332,7 @@ void emit_mov(int reg_d, int reg_s)
     byte_push(code, 0x48);
     byte_push(code, 0x89);
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+    */
 }
 
 // only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
@@ -384,23 +411,10 @@ void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
     else if (reg_d == RDX && preg_s == RAX)
         byte_push(code, 0x10);
 }
-void emit_push(int reg1)
+void emit_push(int reg)
 {
     last_is_terminator = 0;
-    if (reg1 == RAX)
-        byte_push(code, 0x50);
-    else if (reg1 == RDX)
-        byte_push(code, 0x52);
-    else if (reg1 == RSP)
-        byte_push(code, 0x54);
-    else if (reg1 == RBP)
-        byte_push(code, 0x55);
-    else if (reg1 == RSI)
-        byte_push(code, 0x56);
-    else if (reg1 == RDI)
-        byte_push(code, 0x57);
-    else
-        assert(("invalid reg pushed", 0));
+    byte_push(code, 0x50 | reg);
 }
 
 /*
@@ -411,23 +425,18 @@ void emit_xmm(int reg, int size)
 }
 */
 
-void emit_pop(int reg1)
+void emit_pop(int reg)
 {
     last_is_terminator = 0;
-    if (reg1 == RAX)
-        byte_push(code, 0x58);
-    else if (reg1 == RDX)
-        byte_push(code, 0x5A);
-    else if (reg1 == RSP)
-        byte_push(code, 0x5C);
-    else if (reg1 == RBP)
-        byte_push(code, 0x5D);
-    else if (reg1 == RSI)
-        byte_push(code, 0x5E);
-    else if (reg1 == RDI)
-        byte_push(code, 0x5F);
-    else
-        assert(("invalid reg popped", 0));
+    byte_push(code, 0x58 | reg);
+}
+
+void emit_mov_imm(int reg, uint64_t val, size_t size)
+{
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, 0xB0 | ((size == 1) ? 0x08 : 0) | reg);
+    bytes_push_int(code, (uint64_t)val, size);
 }
 // may clobber RAX if val doesn't fit in 32 bits
 void emit_push_val(int64_t val)
@@ -439,8 +448,10 @@ void emit_push_val(int64_t val)
 // 68 80 00 00 00                   push   0x80
 // 6a 80                            push   0xffffffffffffff80
 // 68 0d 3e 8b 00                   push   0x8b3e0d
+    
 // 48 b8 00 00 00 00 01 00 00 00    movabs rax,0x100000000
 // 50                               push   rax
+    
 // 48 b8 00 00 00 00 ff ff ff ff    movabs rax,0xffffffff00000000
 // 50                               push   rax
     
@@ -456,10 +467,9 @@ void emit_push_val(int64_t val)
     }
     else
     {
-        byte_push(code, 0x48);
-        byte_push(code, 0xB8);
-        bytes_push_int(code, (uint64_t)val, 8);
-        byte_push(code, 0x50);
+        // mov into rax and push rax
+        emit_mov_imm(RAX, val, 8);
+        emit_push(RAX);
     }
 }
 void emit_mov_offset(int reg1, int reg2, int64_t offset, size_t size)

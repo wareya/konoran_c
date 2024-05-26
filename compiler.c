@@ -558,8 +558,16 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
     if (left->val->type->variant == TYPE_POINTER)
     {
         assert(right->val->type->primitive_type == PRIM_U64);
-        left->val->type = right->val->type;
-        assert(("TODO: impl + for pointers", 0));
+        
+        _push_small_if_const(right->val);
+        emit_pop_safe(RDX);
+        _push_small_if_const(left->val);
+        emit_pop_safe(RAX);
+        
+        left->val->kind = VAL_STACK_TOP;
+        
+        emit_add(RAX, RDX, 8);
+        emit_push_safe(RAX);
         return;
     }
     assert(types_same(left->val->type, right->val->type));
@@ -692,31 +700,34 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         }
         else if (op == 'd' || op == 'r' || op == '/' || op == '%')
         {
-            emit_mov(RDI, RDX);
+            uint8_t is_div = (op == 'd' || op == '/');
+            emit_mov(RDI, RDX, size);
             emit_xor(RDX, RDX, size);
+            // if / or %, and denominator is zero, jump over div and push 0 instead
             if (op == '/' || op == '%')
             {
-                
+                emit_test(RDI, RDI, size);
+                emit_jmp_cond_short(0, label_anon_num, J_EQ);
             }
-            if (op == 'd' && int_signed)
-            {
+            
+            if (int_signed)
                 emit_idiv(RDI, size);
-                emit_push_safe(RAX);
-            }
-            else if (op == 'd')
-            {
+            else
                 emit_div(RDI, size);
+            if (is_div)
                 emit_push_safe(RAX);
-            }
-            else if (op == 'r' && int_signed)
-            {
-                emit_idiv(RDX, size);
+            else
                 emit_push_safe(RDX);
-            }
-            else if (op == 'r')
+            
+            if (op == '/' || op == '%')
             {
-                emit_idiv(RDX, size);
-                emit_push_safe(RDX);
+                emit_jmp_short(0, label_anon_num + 1);
+                
+                emit_label(0, label_anon_num);
+                emit_push_safe(RDI);
+                
+                emit_label(0, label_anon_num + 1);
+                label_anon_num += 2;
             }
         }
         else
@@ -1024,7 +1035,7 @@ void compile_defs_compile(Node * ast)
         }
         
         emit_push(RBP);
-        emit_mov(RBP, RSP);
+        emit_mov(RBP, RSP, 8);
         emit_sub_imm(RSP, stack_loc);
         
         Node * statement = nth_child(ast, 4)->first_child;
