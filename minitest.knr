@@ -14,7 +14,9 @@ i32 main()//i32 asdf2asdf)
 test_label:
     myvar = 510i32;// + asdf2asdf;
     */
-    myvar = myvar / 0i32;
+    //myvar = myvar / 0i32;
+    myvar = -1293455239i32;
+    myvar = myvar >> 14093i32;
     //myvar = *&myvar;
     return myvar;
 }

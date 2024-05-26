@@ -553,6 +553,20 @@ void _push_small_if_const(Value * item)
 }
 
 // ops that output the same type that they're given as input
+// +
+// -
+// *
+// /
+// %
+// div_unsafe ('d')
+// rem_unsafe ('r')
+// |
+// &
+// ^
+// << ('<')
+// >> ('>')
+// shl_unsafe ('L')
+// shr_unsafe ('R')
 void compile_infix_basic(StackItem * left, StackItem * right, char op)
 {
     if (left->val->type->variant == TYPE_POINTER)
@@ -570,6 +584,18 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         emit_push_safe(RAX);
         return;
     }
+    // shr_unsafe, shl_unsafe, <<, >>
+    if (op == 'R' || op == 'L' || op == '<' || op == '>')
+    {
+        uint8_t is_int = left->val->type->primitive_type >= PRIM_U8 && left->val->type->primitive_type <= PRIM_I64;
+        uint8_t int_signed = left->val->type->primitive_type % 2;
+        
+        uint8_t r_is_int = right->val->type->primitive_type >= PRIM_U8 && right->val->type->primitive_type <= PRIM_I64;
+        
+        if (is_int && r_is_int && int_signed && left->val->type->size == right->val->type->size)
+            right->val->type = left->val->type;
+    }
+    
     assert(types_same(left->val->type, right->val->type));
     
     size_t size = left->val->type->size;
@@ -583,7 +609,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         value->kind = VAL_CONSTANT;
         if (is_int)
         {
-            uint64_t masks[] = {0xFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF};
+            uint64_t masks[] = {0, 0xFF, 0xFFFF, 0, 0xFFFFFFFF, 0, 0, 0, 0xFFFFFFFFFFFFFFFF};
             uint64_t size_mask = masks[size];
             
             left->val->_val &= size_mask;
@@ -651,6 +677,36 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 }
                 else
                     value->_val = 0;
+            }
+            else if (op == '<' || op == 'L')
+            {
+                if (right->val->_val >= size * 8)
+                    value->_val = left->val->_val << (size * 8 - 1);
+                else if (right->val->_val != 0)
+                    value->_val = left->val->_val << r1;
+                else
+                    value->_val = left->val->_val;
+            }
+            else if (op == '>' || op == 'R')
+            {
+                if (right->val->_val >= size * 8)
+                {
+                    if (size == 1)      value->_val = l1 >> 7;
+                    else if (size == 2) value->_val = l2 >> 15;
+                    else if (size == 4) value->_val = l4 >> 23;
+                    else if (size == 8) value->_val = l8 >> 31;
+                    else assert(0);
+                }
+                else if (right->val->_val != 0)
+                {
+                    if (size == 1)      value->_val = l1 >> r1;
+                    else if (size == 2) value->_val = l2 >> r1;
+                    else if (size == 4) value->_val = l4 >> r1;
+                    else if (size == 8) value->_val = l8 >> r1;
+                    else assert(0);
+                }
+                else
+                    value->_val = left->val->_val;
             }
             else if (op == '&')
                 value->_val = left->val->_val & right->val->_val;
@@ -729,6 +785,32 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_label(0, label_anon_num + 1);
                 label_anon_num += 2;
             }
+        }
+        else if (op == 'L' || op == 'R')
+        {
+            emit_mov(RCX, RDX, size);
+            if (op == 'R' && int_signed)
+                emit_sar(RAX, size);
+            else if (op == 'R')
+                emit_shr(RAX, size);
+            else
+                emit_shl(RAX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == '<' || op == '>')
+        {
+            emit_mov(RCX, RDX, size);
+            emit_mov_imm(RDX, (size * 8) - 1, size);
+            emit_cmp(RCX, RDX, size);
+            emit_cmov(RCX, RDX, J_UGT, size);
+            
+            if (op == '>' && int_signed)
+                emit_sar(RAX, size);
+            else if (op == '>')
+                emit_shr(RAX, size);
+            else
+                emit_shl(RAX, size);
+            emit_push_safe(RAX);
         }
         else
             assert(("other ops not implemented yet!", 0));
@@ -987,8 +1069,17 @@ void compile_code(Node * ast, int want_ptr)
          || strcmp(op_text, "|") == 0
          || strcmp(op_text, "&") == 0
          || strcmp(op_text, "^") == 0
+         || strcmp(op_text, "<<") == 0
+         || strcmp(op_text, ">>") == 0
+         || strcmp(op_text, "shl_unsafe") == 0
+         || strcmp(op_text, "shr_unsafe") == 0
         )
+        {
+            char c = op_text[0];
+            if (c == 's' && op_text[2] == 'l') c = 'L';
+            if (c == 's' && op_text[2] == 'r') c = 'R';
             compile_infix_basic(expr_1, expr_2, op_text[0]);
+        }
         else
         {
             puts("TODO other infix ops");

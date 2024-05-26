@@ -121,10 +121,16 @@ void do_fix_jumps(void)
 enum {
     J_EQ = 0x4,
     J_NE = 0x5,
-    J_LT = 0xC,
-    J_GE = 0xD, // NLT
-    J_LE = 0xE,
-    J_GT = 0xF, // NLE
+    // for unsigned
+    J_ULE = 0x6, // JBE
+    J_UGT = 0x7, // NULE
+    J_ULT = 0x2, // JB
+    J_UGE = 0x3, // NULT
+    // for signed:
+    J_SLT = 0xC, // JLT
+    J_SGE = 0xD, // NLT
+    J_SLE = 0xE,
+    J_SGT = 0xF, // NLE
 };
 void emit_jmp_short(char * label, size_t num)
 {
@@ -315,6 +321,19 @@ void emit_idiv(int reg, size_t size)
     emit_mullike(reg, size, 0xF8);
 }
 
+void emit_cmov(int reg_d, int reg_s, int cond, int size)
+{
+    if (size == 1)
+        size = 2;
+    assert(size == 2 || size == 4 || size == 8);
+    
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    byte_push(code, 0x0F);
+    byte_push(code, 0x40 | cond);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
 void emit_mov(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
@@ -421,6 +440,12 @@ void emit_push(int reg)
 // TODO
 void emit_xmm(int reg, int size)
 {
+    
+// 48 83 ec 10                  sub    rsp, 0x10
+// f3 0f 7f 84 24 00 00 00 00   movdqu XMMWORD PTR [rsp+0x0],xmm0
+// f3 0f 6f 84 24 00 00 00 00   movdqu xmm0,XMMWORD PTR [rsp+0x0]
+// 48 83 c4 10                  add    rsp, 0x10
+    
     assert(size == 4 || size == 8);
 }
 */
@@ -431,11 +456,38 @@ void emit_pop(int reg)
     byte_push(code, 0x58 | reg);
 }
 
-void emit_mov_imm(int reg, uint64_t val, size_t size)
+
+void emit_shl(int reg, size_t size)
 {
+    last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, reg);
     
-    byte_push(code, 0xB0 | ((size == 1) ? 0x08 : 0) | reg);
+    byte_push(code, (size > 1) ? 0xD3 : 0xD2);
+    byte_push(code, 0xE0 | reg);
+}
+void emit_shr(int reg, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, (size > 1) ? 0xD3 : 0xD2);
+    byte_push(code, 0xE8 | reg);
+}
+void emit_sar(int reg, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, (size > 1) ? 0xD3 : 0xD2);
+    byte_push(code, 0xF8 | reg);
+}
+
+void emit_mov_imm(int reg, uint64_t val, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, reg);
+    
+    byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
     bytes_push_int(code, (uint64_t)val, size);
 }
 // may clobber RAX if val doesn't fit in 32 bits
