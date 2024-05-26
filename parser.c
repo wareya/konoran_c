@@ -627,10 +627,11 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         Node * child_1 = 0;
         if (!(does_parse_as_text(tokens, "goto", &tokens)))
             return NULL;
-        if (!(child_1 = parse_as(tokens, PARENEXPR, &tokens)))
+        if (!(child_1 = parse_as(tokens, NAME, &tokens)))
             return NULL;
         if (!(does_parse_as_text(tokens, ";", &tokens)))
             return free_node(&child_1), NULL;
+        puts("---parsed goto!");
         Node * root = add_node(GOTO);
         insert_node(child_1, root);
         return (*next_tokens = tokens), root;

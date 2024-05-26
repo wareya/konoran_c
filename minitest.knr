@@ -1,10 +1,17 @@
 constexpr i32 myglobal = 69i32 + 5i32;
 
-i32 main(i32 asdf2asdf)
+i32 main()//i32 asdf2asdf)
 {
     i32 myvar;
-    myvar = 510i32 + asdf2asdf;
-    myvar = myvar div_unsafe -1i32;
+    
+    goto test_label;
+    
+    myvar = 10i32;
+    return myvar;
+    
+test_label:
+    myvar = 510i32;// + asdf2asdf;
+    myvar = myvar div_unsafe 4i32;
     myvar = *&myvar;
     return myvar;
 }

@@ -20,11 +20,158 @@ enum {
 
 uint8_t last_is_terminator = 0;
 
+size_t label_anon_num = 1;
+
+// struct for label themselves OR label uses (jumps)
+// NOTE: only relative jumps are supported
+typedef struct _Label
+{
+    char * name; // name it not anonymous
+    size_t num; // number if anonymous
+    ptrdiff_t loc; // location in bytecode (either target or address rewrite)
+    struct _Label * next;
+    uint8_t size; // for jumps: how many bytes can be rewritten. abort if out of range
+} Label;
+
+Label * new_label(char * name, size_t num, ptrdiff_t loc)
+{
+    Label * label = (Label *)malloc(sizeof(Label));
+    memset(label, 0, sizeof(Label));
+    label->loc = loc;
+    label->name = name;
+    label->num = num;
+    return label;
+}
+
+Label * labels;
+Label * log_label(char * name, size_t num, ptrdiff_t loc)
+{
+    Label * label = new_label(name, num, loc);
+    label->next = labels;
+    labels = label;
+    return label;
+}
+
+Label * jumps_to_rewrite;
+Label * log_jump(char * name, size_t num, ptrdiff_t loc, uint8_t size)
+{
+    Label * jump = new_label(name, num, loc);
+    jump->next = jumps_to_rewrite;
+    jump->size = size;
+    jumps_to_rewrite = jump;
+    return jump;
+}
+
+void clear_jump_log(void)
+{
+    while (jumps_to_rewrite)
+    {
+        Label * f = jumps_to_rewrite;
+        jumps_to_rewrite = jumps_to_rewrite->next;
+        free(jumps_to_rewrite);
+    }
+    while (labels)
+    {
+        Label * f = labels;
+        labels = labels->next;
+        free(labels);
+    }
+}
+
+void do_fix_jumps(void)
+{
+    Label * jump = jumps_to_rewrite;
+    while(jump)
+    {
+        ptrdiff_t jump_end = jump->loc + jump->size;
+        
+        Label * label = labels;
+        uint8_t matching_label_found = 0;
+        while(label)
+        {
+            uint8_t match = 0;
+            if (jump->name && label->name)
+                match = !strcmp(jump->name, label->name);
+            else if (!jump->name && !label->name)
+                match = (jump->num == label->num);
+            if (match)
+            {
+                matching_label_found = 1;
+                ptrdiff_t diff = label->loc - jump_end;
+                assert(jump->size == 1 || jump->size == 4);
+                
+                if (jump->size == 1 && diff >= -128 && diff <= 127)
+                    code->data[jump->loc] = (int8_t)diff;
+                else if (jump->size == 4 && diff >= -2147483648 && diff <= 2147483647)
+                    memcpy(code->data + jump->loc, &diff, 4);
+                else
+                    assert(("unsupported size and offset combination for jump rewrite", 0));
+                
+                break;
+            }
+            label = label->next;
+        }
+        assert(matching_label_found);
+        jump = jump->next;
+    }
+    clear_jump_log();
+}
+
+// condition codes for emit_jmp_cond_short
+enum {
+    J_EQ = 0x4,
+    J_NE = 0x5,
+    J_LT = 0xC,
+    J_GE = 0xD, // NLT
+    J_LE = 0xE,
+    J_GT = 0xF, // NLE
+};
+void emit_jmp_short(char * label, size_t num)
+{
+    last_is_terminator = 1;
+    byte_push(code, 0xEB);
+    log_jump(label, num, code->len, 1);
+    byte_push(code, 0x7E); // infinite loop until overwritten
+}
+void emit_jmp_cond_short(char * label, size_t num, int cond)
+{
+    last_is_terminator = 1;
+    byte_push(code, 0x70 | cond);
+    log_jump(label, num, code->len, 1);
+    byte_push(code, 0x7E); // infinite loop until overwritten
+}
+void emit_jmp_long(char * label, size_t num)
+{
+    last_is_terminator = 1;
+    byte_push(code, 0xE9);
+    log_jump(label, num, code->len, 4);
+    byte_push(code, 0xFB); // infinite loop until overwritten
+    byte_push(code, 0xFF);
+    byte_push(code, 0xFF);
+    byte_push(code, 0x7F);
+}
+void emit_jmp_cond_long(char * label, size_t num, int cond)
+{
+    last_is_terminator = 1;
+    byte_push(code, 0x0F);
+    byte_push(code, 0x80 | cond);
+    log_jump(label, num, code->len, 4);
+    byte_push(code, 0xFA); // infinite loop until overwritten
+    byte_push(code, 0xFF);
+    byte_push(code, 0xFF);
+    byte_push(code, 0x7F);
+}
+void emit_label(char * label, size_t num)
+{
+    last_is_terminator = 0;
+    log_label(label, num, code->len);
+}
 void emit_ret(void)
 {
     last_is_terminator = 1;
     byte_push(code, 0xC3);
 }
+
 void emit_sub_imm(int reg, int64_t val)
 {
     if (val == 0) // NOP
@@ -84,70 +231,65 @@ void emit_add_imm(int reg, int64_t val)
     else if (size == 1 && (reg_d >= RSP || reg_s >= RSP)) \
         byte_push(code, 0x40);
 
-void emit_add(int reg_d, int reg_s, size_t size)
+void emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg_d, reg_s);
     
-    byte_push(code, (size > 1) ? 0x01 : 0x00);
+    byte_push(code, opcode + (size > 1));
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+}
+void emit_add(int reg_d, int reg_s, size_t size)
+{
+    emit_addlike(reg_d, reg_s, size, 0x00);
 }
 void emit_sub(int reg_d, int reg_s, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg_d, reg_s);
-    
-    byte_push(code, (size > 1) ? 0x29 : 0x28);
-    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+    emit_addlike(reg_d, reg_s, size, 0x28);
+}
+void emit_cmp(int reg_d, int reg_s, size_t size)
+{
+    emit_addlike(reg_d, reg_s, size, 0x38);
+}
+void emit_test(int reg_d, int reg_s, size_t size)
+{
+    emit_addlike(reg_d, reg_s, size, 0x84);
 }
 void emit_xor(int reg_d, int reg_s, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg_d, reg_s);
-    
-    byte_push(code, (size > 1) ? 0x31 : 0x30);
-    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+    emit_addlike(reg_d, reg_s, size, 0x30);
 }
 void emit_and(int reg_d, int reg_s, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg_d, reg_s);
-    
-    byte_push(code, (size > 1) ? 0x21 : 0x20);
-    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+    emit_addlike(reg_d, reg_s, size, 0x20);
 }
 void emit_or(int reg_d, int reg_s, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg_d, reg_s);
-    
-    byte_push(code, (size > 1) ? 0x09 : 0x08);
-    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+    emit_addlike(reg_d, reg_s, size, 0x08);
 }
-
-void emit_mul(int reg, size_t size)
+void emit_mullike(int reg, size_t size, uint8_t maskee)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, reg);
     
     byte_push(code, (size > 1) ? 0xF7 : 0xF6);
-    byte_push(code, 0xE0 | reg);
+    byte_push(code, maskee | reg);
+}
+void emit_mul(int reg, size_t size)
+{
+    emit_mullike(reg, size, 0xE0);
+}
+void emit_imul(int reg, size_t size)
+{
+    emit_mullike(reg, size, 0xE8);
 }
 void emit_div(int reg, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
-    
-    byte_push(code, (size > 1) ? 0xF7 : 0xF6);
-    byte_push(code, 0xF0 | reg);
+    emit_mullike(reg, size, 0xF0);
 }
 void emit_idiv(int reg, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
-    
-    byte_push(code, (size > 1) ? 0xF7 : 0xF6);
-    byte_push(code, 0xF8 | reg);
+    emit_mullike(reg, size, 0xF8);
 }
 
 void emit_mov(int reg_d, int reg_s)
@@ -260,6 +402,14 @@ void emit_push(int reg1)
     else
         assert(("invalid reg pushed", 0));
 }
+
+/*
+// TODO
+void emit_xmm(int reg, int size)
+{
+    assert(size == 4 || size == 8);
+}
+*/
 
 void emit_pop(int reg1)
 {

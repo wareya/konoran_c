@@ -581,28 +581,44 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             left->val->_val &= size_mask;
             right->val->_val &= size_mask;
             
+            int8_t  l1 = (int8_t)left->val->_val;
+            int16_t l2 = (int16_t)left->val->_val;
+            int32_t l4 = (int32_t)left->val->_val;
+            int64_t l8 = (int64_t)left->val->_val;
+            
+            int8_t  r1 = (int8_t)right->val->_val;
+            int16_t r2 = (int16_t)right->val->_val;
+            int32_t r4 = (int32_t)right->val->_val;
+            int64_t r8 = (int64_t)right->val->_val;
+            
             if (op == '+')
                 value->_val = left->val->_val + right->val->_val;
             else if (op == '-')
                 value->_val = left->val->_val - right->val->_val;
             else if (op == '*')
-                value->_val = left->val->_val * right->val->_val;
+            {
+                if (int_signed)
+                {
+                    if (size == 1)      value->_val = l1 * r1;
+                    else if (size == 2) value->_val = l2 * r2;
+                    else if (size == 4) value->_val = l4 * r4;
+                    else if (size == 8) value->_val = l8 * r8;
+                    else assert(0);
+                }
+                else
+                    value->_val = left->val->_val * right->val->_val;
+            }
             else if (op == '/' || op == 'd')
             {
                 if (right->val->_val != 0)
                 {
                     if (int_signed)
                     {
-                        if (size == 1)
-                            value->_val = (int8_t)left->val->_val / (int8_t)right->val->_val;
-                        else if (size == 2)
-                            value->_val = (int16_t)left->val->_val / (int16_t)right->val->_val;
-                        else if (size == 4)
-                            value->_val = (int32_t)left->val->_val / (int32_t)right->val->_val;
-                        else if (size == 8)
-                            value->_val = (int64_t)left->val->_val / (int64_t)right->val->_val;
-                        else
-                            assert(0);
+                        if (size == 1)      value->_val = l1 / r1;
+                        else if (size == 2) value->_val = l2 / r2;
+                        else if (size == 4) value->_val = l4 / r4;
+                        else if (size == 8) value->_val = l8 / r8;
+                        else assert(0);
                     }
                     else
                         value->_val = left->val->_val / right->val->_val;
@@ -616,16 +632,11 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 {
                     if (int_signed)
                     {
-                        if (size == 1)
-                            value->_val = (int8_t)left->val->_val / (int8_t)right->val->_val;
-                        else if (size == 2)
-                            value->_val = (int16_t)left->val->_val % (int16_t)right->val->_val;
-                        else if (size == 4)
-                            value->_val = (int32_t)left->val->_val % (int32_t)right->val->_val;
-                        else if (size == 8)
-                            value->_val = (int64_t)left->val->_val % (int64_t)right->val->_val;
-                        else
-                            assert(0);
+                        if (size == 1)      value->_val = l1 % r1;
+                        else if (size == 2) value->_val = l2 % r2;
+                        else if (size == 4) value->_val = l4 % r4;
+                        else if (size == 8) value->_val = l8 % r8;
+                        else assert(0);
                     }
                     else
                         value->_val = left->val->_val % right->val->_val;
@@ -669,15 +680,24 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             emit_sub(RAX, RDX, size);
             emit_push_safe(RAX);
         }
+        else if (op == '*' && int_signed)
+        {
+            emit_imul(RDX, size);
+            emit_push_safe(RAX);
+        }
         else if (op == '*')
         {
             emit_mul(RDX, size);
             emit_push_safe(RAX);
         }
-        else if (op == 'd' || op == 'r')
+        else if (op == 'd' || op == 'r' || op == '/' || op == '%')
         {
             emit_mov(RDI, RDX);
             emit_xor(RDX, RDX, size);
+            if (op == '/' || op == '%')
+            {
+                
+            }
             if (op == 'd' && int_signed)
             {
                 emit_idiv(RDI, size);
@@ -754,10 +774,21 @@ void compile_code(Node * ast, int want_ptr)
         emit_pop(RBP);
         emit_ret();
     } break;
+    case LABEL:
+    {
+        char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
+        emit_label(text, 0);
+    } break;
+    case GOTO:
+    {
+        char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
+        emit_jmp_long(text, 0);
+    } break;
     case RVAR_NAME:
     {
         Variable * var = get_local(ast);
         assert(var);
+        
         // FIXME globals
         assert(var->val->kind == VAL_STACK_BOTTOM);
         // FIXME aggregates
@@ -777,7 +808,6 @@ void compile_code(Node * ast, int want_ptr)
         value->kind = VAL_STACK_TOP;
         
         stack_push_new(value);
-        puts("asdfgioragoig");
     } break;
     case LVAR:
     {
@@ -788,6 +818,7 @@ void compile_code(Node * ast, int want_ptr)
         assert(want_ptr == WANT_PTR_VIRTUAL);
         Variable * var = get_local(ast);
         assert(var);
+        
         // FIXME globals
         assert(var->val->kind == VAL_STACK_BOTTOM);
         // FIXME aggregates
@@ -873,7 +904,7 @@ void compile_code(Node * ast, int want_ptr)
         char * _dummy = 0;
         uint64_t rawval;
         if (is_signed)
-            rawval = strtoll(text, &_dummy, text[1] == 'x' ? 16 : 10);
+            rawval = strtoll(text, &_dummy, (text[1] == 'x' || text[2] == 'x') ? 16 : 10);
         else
             rawval = strtoull(text, &_dummy, text[1] == 'x' ? 16 : 10);
         assert(_dummy - text == val_length);
@@ -1006,6 +1037,10 @@ void compile_defs_compile(Node * ast)
         
         // ensure termination
         assert(last_is_terminator);
+        
+        // fix up jumps
+        do_fix_jumps();
+        
         /*
         emit_add_imm(RSP, stack_loc);
         emit_pop(RBP);

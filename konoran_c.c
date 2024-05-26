@@ -53,6 +53,7 @@ int main(int argc, char ** argv)
             asdf = asdf->next;
             i--;
         }
+        return -1;
     }
     else
     {
@@ -76,7 +77,7 @@ int main(int argc, char ** argv)
 // suppress wrong/non-posix GCC warning
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-    int (* jit_func) (int) = (int(*)(int)) jit_code;
+    int (* jit_func) (int) = (int(*)(int))(void *)jit_code;
 #pragma GCC diagnostic pop
     
     asdf = jit_func(152);

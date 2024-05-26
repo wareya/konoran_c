@@ -16,6 +16,32 @@ optimizations:
 - push ra; pop ra -> <delete>
 - push; mov -> mov; push (unrelated registers)
 - mov ra *rb; mov *rb ra -> <delete; dead load-store>
-- mov *rb ra; mov ra *rb -> mov *rb ra (redundant load)
+- mov *rb ra; mov ra *rb -> mov *rb ra (redundant load in store-load)
 - sub ra n; sub ra m -> sub ra n+m
 - add ra n; add ra m -> add ra n+m
+
+things that flush the optimization queue:
+- direct RSP accesses
+- any branches (incl. call, return)
+- any volatile memory accesses
+before and after written
+
+
+
+
+push 5;
+push 5; push 5;
+push 5; push 5; pop r2;
+push 5; mov r2 5;
+mov r2 5; push 5;
+mov r2 5; push 5; pop r1;
+mov r2 5; mov r1 5;
+mov r2 5; mov r1 5; add r1 r2;
+mov r2 5; mov r1 5; add r1 r2; push r1;
+mov r2 5; mov r1 5; add r1 r2; push r1; push 5;
+mov r2 5; mov r1 5; add r1 r2; push r1; push 5; pop r2; 
+mov r2 5; mov r1 5; add r1 r2; push r1; mov r2 5;
+mov r2 5; mov r1 5; add r1 r2; mov r2 5; push r1; pop r1;
+mov r2 5; mov r1 5; add r1 r2; mov r2 5; 
+mov r2 5; mov r1 5; add r1 r2; mov r2 5; mul r1 r2;
+mov r2 5; mov r1 5; add r1 r2; mov r2 5; mul r1 r2; push r1;
