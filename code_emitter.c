@@ -323,6 +323,8 @@ void emit_idiv(int reg, size_t size)
 
 void emit_cmov(int reg_d, int reg_s, int cond, int size)
 {
+    last_is_terminator = 0;
+    
     if (size == 1)
         size = 2;
     assert(size == 2 || size == 4 || size == 8);

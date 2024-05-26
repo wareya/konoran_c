@@ -213,16 +213,18 @@ Type * get_type(char * name)
 enum { // kind
     VAL_INVALID = 0,
     VAL_CONSTANT,
-    //VAL_CONSTANTPTR,
-    //VAL_GLOBALPTR,
-    // - a pointer to a constant in static memory
-    // -- stored in loc
-    // - a reference to mutable global memory
-    // -- stored in loc
-    // FIXME design confusion
     VAL_STACK_BOTTOM,
     VAL_STACK_TOP,
+    VAL_ANYWHERE,
 };
+
+//VAL_CONSTANTPTR,
+//VAL_GLOBALPTR,
+// - a pointer to a constant in static memory
+// -- stored in loc
+// - a reference to mutable global memory
+// -- stored in loc
+// FIXME design confusion
 
 typedef struct _Value
 {
@@ -944,7 +946,7 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case BINSTATE:
     {
-        compile_code(nth_child(ast, 0), WANT_PTR_VIRTUAL);
+        compile_code(nth_child(ast, 0), 0);
         compile_code(nth_child(ast, 1), 0);
         
         Value * expr = stack_pop()->val;
@@ -953,8 +955,7 @@ void compile_code(Node * ast, int want_ptr)
         // will always be primitive-sized because it's a pointer
         _push_small_if_const(expr);
         
-        // FIXME globals
-        assert(target->kind == VAL_STACK_BOTTOM);
+        assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_ANYWHERE);
         assert(target);
         assert(expr);
         
@@ -1024,20 +1025,36 @@ void compile_code(Node * ast, int want_ptr)
             else if (strcmp(op_text, "*") == 0)
             {
                 assert(val->val->type->variant == TYPE_POINTER);
+                
                 Type * new_type = val->val->type->inner_type;
                 assert(new_type->size <= 8);
                 
-                if (val->val->kind == VAL_STACK_TOP)
+                if (want_ptr == WANT_PTR_NONE)
                 {
-                    emit_pop_safe(RDX);
-                    emit_mov_reg_preg(RAX, RDX, new_type->size);
-                    emit_push_safe(RAX);
-                    Value * value = new_value(new_type);
-                    value->kind = VAL_STACK_TOP;
-                    stack_push_new(value);
+                    if (val->val->kind == VAL_STACK_TOP)
+                    {
+                        emit_pop_safe(RDX);
+                        emit_mov_reg_preg(RAX, RDX, new_type->size);
+                        emit_push_safe(RAX);
+                        Value * value = new_value(new_type);
+                        value->kind = VAL_STACK_TOP;
+                        stack_push_new(value);
+                    }
+                    else
+                        assert(("TODO: deref non stack top pointers", 0));
                 }
                 else
-                    assert(("TODO: deref non stack top pointers", 0));
+                {
+                    if (val->val->kind == VAL_STACK_TOP)
+                    {
+                        //emit_pop_safe(RDX);
+                        //emit_lea(RAX, RDX, 0);
+                        //emit_push_safe(RAX);
+                        Value * value = new_value(new_type);
+                        value->kind = VAL_ANYWHERE;
+                        stack_push_new(value);
+                    }
+                }
             }
             else
             {
