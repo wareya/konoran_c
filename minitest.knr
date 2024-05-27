@@ -2,10 +2,10 @@ constexpr i32 myglobal = 69i32 + 5i32;
 
 i32 main()//i32 asdf2asdf)
 {
-    i32 myvar;
-    myvar = 10i32;
+    i32 myvar = 10i32;
     ptr(i32) myptr;
     myptr = &myvar;
+    *myptr = *myptr;
     /*
     goto test_label;
     
@@ -16,8 +16,12 @@ test_label:
     myvar = 510i32;// + asdf2asdf;
     */
     //myvar = myvar / 0i32;
-    *&myvar = -1293455239i32;
-    myvar = myvar >> 111i32;
+    *myptr = -1293455239i32;
+    myvar = myvar >> 111u32;
     //myvar = *&myvar;
     return myvar;
+    
+    f32 asdf = 9589521398123.0f32;
+    //return (-110i8) as i32;
+    return (-5923896493459123135i64) as i32;
 }

@@ -7,6 +7,8 @@
 #define zalloc(X) (calloc(1, (X)))
 #endif
 
+
+
 byte_buffer * code = 0;
 byte_buffer * static_data = 0;
 size_t global_data_len = 0;
@@ -109,6 +111,36 @@ uint8_t types_same(Type * a, Type * b)
     puts("TODO compare types");
     assert(0);
 }
+
+uint8_t type_is_int(Type * type)
+{
+    return type->primitive_type >= PRIM_U8 && type->primitive_type <= PRIM_I64;
+}
+uint8_t type_is_signed(Type * type)
+{
+    return type_is_int(type) && (type->primitive_type % 2);
+}
+uint8_t type_is_float(Type * type)
+{
+    return type->primitive_type >= PRIM_F32 && type->primitive_type <= PRIM_F64;
+}
+
+
+enum {
+    ABI_WIN,
+    ABI_SYSV,
+};
+
+uint8_t abi = ABI_WIN;
+// Windows:
+// xmm0/rcx    xmm1/rdx    xmm2/r8    xmm3/r9    stack(rtl, top = leftmost)
+
+// SystemV:
+// RDI, RSI, RDX, RCX, R8, R9 (nonfloat)
+// xmm0~7 (float)
+// stack(rtl, top = leftmost)
+// horrifyingly, the stack is non-monotonic!!! an arg can go to stack, then the next arg to reg, then the next arg to stack!!!
+
 
 Type * new_type(char * name, int variant)
 {
@@ -589,22 +621,28 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
     // shr_unsafe, shl_unsafe, <<, >>
     if (op == 'R' || op == 'L' || op == '<' || op == '>')
     {
-        uint8_t is_int = left->val->type->primitive_type >= PRIM_U8 && left->val->type->primitive_type <= PRIM_I64;
-        uint8_t int_signed = left->val->type->primitive_type % 2;
-        
-        uint8_t r_is_int = right->val->type->primitive_type >= PRIM_U8 && right->val->type->primitive_type <= PRIM_I64;
+        uint8_t is_int = type_is_int(left->val->type);
+        uint8_t int_signed = type_is_signed(left->val->type);
+        uint8_t r_is_int = type_is_int(right->val->type);
+        uint8_t r_int_signed = type_is_signed(right->val->type);
         
         if (is_int && r_is_int && int_signed && left->val->type->size == right->val->type->size)
-            right->val->type = left->val->type;
+        {
+            if (!r_int_signed)
+                right->val->type = left->val->type;
+            else
+                assert(("type mismatch", 0));
+        }
     }
     
     assert(types_same(left->val->type, right->val->type));
     
     size_t size = left->val->type->size;
-    uint8_t is_int = left->val->type->primitive_type >= PRIM_U8 && left->val->type->primitive_type <= PRIM_I64;
-    uint8_t is_float = left->val->type->primitive_type >= PRIM_F32;
-    uint8_t int_signed = left->val->type->primitive_type % 2;
+    uint8_t is_int = type_is_int(left->val->type);
+    uint8_t int_signed = type_is_signed(left->val->type);
+    uint8_t is_float = type_is_float(left->val->type);
     
+    // constant folding
     if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
     {
         Value * value = new_value(left->val->type);
@@ -818,8 +856,6 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             assert(("other ops not implemented yet!", 0));
     }
     
-    
-    
     Value * value = new_value(left->val->type);
     value->kind = VAL_STACK_TOP;
     stack_push_new(value);
@@ -862,7 +898,7 @@ void compile_code(Node * ast, int want_ptr)
             _push_small_if_const(expr->val);
             assert(return_type == expr->val->type);
             assert(return_type->size <= 8);
-            emit_pop(RAX);
+            emit_pop_safe(RAX);
         }
         
         emit_add_imm(RSP, stack_loc);
@@ -925,7 +961,9 @@ void compile_code(Node * ast, int want_ptr)
         stack_push_new(var->val);
     } break;
     case DECLARATION:
+    case FULLDECLARATION:
     {
+        printf("%lld\n", stack_offset);
         assert(stack_offset == 0);
         
         Type * type = parse_type(nth_child(ast, 0));
@@ -943,6 +981,22 @@ void compile_code(Node * ast, int want_ptr)
         var->val->kind = VAL_STACK_BOTTOM;
         var->val->loc = stack_loc;
         
+        if (ast->type == FULLDECLARATION)
+        {
+            assert(stack_offset == 0);
+            // destination location into RAX
+            emit_lea(RAX, RBP, -var->val->loc);
+            
+            compile_code(nth_child(ast, 2), 0);
+            Value * expr = stack_pop()->val;
+            
+            _push_small_if_const(expr);
+            emit_pop_safe(RDX); // value into RDX
+            
+            emit_mov_preg_reg(RAX, RDX, expr->type->size);
+            
+            assert(stack_offset == 0);
+        }
     } break;
     case BINSTATE:
     {
@@ -952,20 +1006,69 @@ void compile_code(Node * ast, int want_ptr)
         Value * expr = stack_pop()->val;
         Value * target = stack_pop()->val;
         
-        // will always be primitive-sized because it's a pointer
-        _push_small_if_const(expr);
-        
         assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_ANYWHERE);
         assert(target);
         assert(expr);
         
-        // FIXME non-prim-sized types
+        _push_small_if_const(expr); // FIXME non-prim-sized types
         emit_pop_safe(RDX); // value into RDX
+        
+        _push_small_if_const(target);
         emit_pop_safe(RAX); // destination location into RAX
         
         emit_mov_preg_reg(RAX, RDX, expr->type->size);
     } break;
+    case CAST:
+    {
+        compile_code(nth_child(ast, 0), 0);
+        Value * expr = stack_pop()->val;
+        Type * type = parse_type(nth_child(ast, 1));
+        assert(expr);
+        // FIXME non-prim-sized types
+        assert(expr->type->size <= 8);
+        assert(type->size <= 8);
+        
+        _push_small_if_const(expr);
+        Type * expr_type = expr->type;
+        
+        if (type_is_int(expr_type) && type_is_int(type))
+        {
+            // size downcast. do nothing.
+            if (type->size <= expr_type->size)
+            {
+                assert(type->size != expr_type->size || type_is_signed(type) == type_is_signed(expr_type));
+                
+                Value * value = new_value(type);
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
+            }
+            else
+            {
+                assert(type_is_signed(type) == type_is_signed(expr_type));
+                emit_pop_safe(RAX); // value into RAX
+                if (type_is_signed(type))
+                    emit_sign_extend(RAX, type->size, expr_type->size);
+                else
+                    emit_zero_extend(RAX, type->size, expr_type->size);
+                emit_push_safe(RAX); // value into RAX
+                
+                Value * value = new_value(type);
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
+            }
+        }
+        // fast from float to int
+        else if (type_is_float(expr_type) && type_is_int(type))
+        {
+            assert(("TODO: unsupported float-to-int cast", 0));
+        }
+        else
+        {
+            assert(("TODO: unsupported cast type pair", 0));
+        }
+    } break;
     case STATEMENT:
+    case PARENEXPR:
     {
         compile_code(ast->first_child, 0);
     } break;
@@ -1007,6 +1110,33 @@ void compile_code(Node * ast, int want_ptr)
         Value * value = new_value(type);
         value->kind = VAL_CONSTANT;
         value->_val = rawval;
+        
+        stack_push_new(value);
+    } break;
+    case NFLOAT:
+    {
+        size_t len = ast->textlen;
+        assert(ast->textlen >= 5);
+        char * text = strcpy_len(ast->text, ast->textlen);
+        char last_char = text[len - 1];
+        uint8_t size = last_char == '2' ? 4 : 8;
+        
+        char * typename = text + len - 3;
+        ptrdiff_t val_length = typename - text;
+        
+        char * _dummy = 0;
+        double val_d = strtod(text, &_dummy);
+        float val_f = val_d;
+        
+        Type * type = get_type(typename);
+        Value * value = new_value(type);
+        value->kind = VAL_CONSTANT;
+        
+        value->_val = 0;
+        if (size == 8)
+            memcpy(&value->_val, &val_d, 8);
+        else
+            memcpy(&value->_val, &val_f, 4);
         
         stack_push_new(value);
     } break;
@@ -1058,7 +1188,7 @@ void compile_code(Node * ast, int want_ptr)
             }
             else
             {
-                puts("TODO other infix ops");
+                puts("TODO other unary ops");
                 assert(0);
             }
         }

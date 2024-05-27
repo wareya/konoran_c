@@ -15,8 +15,28 @@ enum {
     RBP,
     RSI,
     RDI,
-    // higher registers always have weird encodings (instead of just sometimes) so we don't support generating them
+    // higher registers always have weird encodings (instead of just sometimes) so we don't support generating them in all functions
+    R8 = 0x10,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
+    
+    XMM0 = 0x1000,
+    XMM1,
+    XMM2,
+    XMM3,
+    XMM4,
+    XMM5,
+    XMM6,
+    XMM7,
+    
+    STACK__ = 0x7FFF, // for ABI stuff only
 };
+
 
 uint8_t last_is_terminator = 0;
 
@@ -203,6 +223,8 @@ void emit_ret(void)
 
 void emit_sub_imm(int reg, int64_t val)
 {
+    assert(reg <= RDI);
+    
     if (val == 0) // NOP
         return;
     last_is_terminator = 0;
@@ -228,6 +250,8 @@ void emit_sub_imm(int reg, int64_t val)
 }
 void emit_add_imm(int reg, int64_t val)
 {
+    assert(reg <= RDI);
+    
     if (val == 0) // NOP
         return;
     last_is_terminator = 0;
@@ -252,18 +276,59 @@ void emit_add_imm(int reg, int64_t val)
     }
 }
 
+// 48 89 c0                mov    rax,rax
+// 49 89 c0                mov    r8,rax
+// 4c 89 c0                mov    rax,r8
+// 4d 89 c0                mov    r8,r8
+
+// 89 c0                   mov    eax,eax
+// 41 89 c0                mov    r8d,eax
+// 44 89 c0                mov    eax,r8d
+// 45 89 c0                mov    r8d,r8d
+
+// 66 89 c0                mov    ax,ax
+// 66 41 89 c0             mov    r8w,ax
+// 66 44 89 c0             mov    ax,r8w
+// 66 45 89 c0             mov    r8w,r8w
+
+// 66 89 e4                mov    sp,sp
+// 66 41 89 e0             mov    r8w,sp
+// 66 44 89 c4             mov    sp,r8w
+// 66 45 89 c0             mov    r8w,r8w
+
+// 88 c0                   mov    al,al
+// 41 88 c0                mov    r8b,al
+// 44 88 c0                mov    al,r8b
+// 45 88 c0                mov    r8b,r8b
+
+// 40 88 e4                mov    spl,spl
+// 41 88 e0                mov    r8b,spl
+// 44 88 c4                mov    spl,r8b
+// 45 88 c0                mov    r8b,r8b
+
 #define EMIT_LEN_PREFIX(reg_d, reg_s) \
-    if (size == 8) \
-        byte_push(code, 0x48); \
-    else if (size == 2) \
+    assert(size == 1 || size == 2 || size == 4 || size == 8); \
+    assert(reg_d <= R15 && reg_s <= R15); \
+    if (size == 2) \
         byte_push(code, 0x66); \
+    uint8_t __a_aa__aaaa = 0x00; \
+    if (size == 8) \
+        __a_aa__aaaa |= 0x48; \
     else if (size == 1 && (reg_d >= RSP || reg_s >= RSP)) \
-        byte_push(code, 0x40);
+        __a_aa__aaaa |= 0x40; \
+    if (reg_d >= R8) \
+        __a_aa__aaaa |= 0x01; \
+    if (reg_s >= R8) \
+        __a_aa__aaaa |= 0x04; \
+    if (__a_aa__aaaa != 0x00) \
+        byte_push(code, __a_aa__aaaa);
 
 void emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg_d, reg_s);
+    reg_d &= 7;
+    reg_s &= 7;
     
     byte_push(code, opcode + (size > 1));
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
@@ -299,7 +364,8 @@ void emit_or(int reg_d, int reg_s, size_t size)
 void emit_mullike(int reg, size_t size, uint8_t maskee)
 {
     last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
+    EMIT_LEN_PREFIX(reg, 0);
+    reg &= 7;
     
     byte_push(code, (size > 1) ? 0xF7 : 0xF6);
     byte_push(code, maskee | reg);
@@ -321,6 +387,105 @@ void emit_idiv(int reg, size_t size)
     emit_mullike(reg, size, 0xF8);
 }
 
+// MOVZX (or MOV) to same register
+// RDI and lower only
+// TODO test if implemented correctly
+void emit_zero_extend(int reg, int size_to, int size_from)
+{
+    last_is_terminator = 0;
+    
+// 89 c0                   mov    eax,eax
+// 48 0f b7 c0             movzx  rax,ax
+// 48 0f b6 c0             movzx  rax,al
+    
+// 0f b7 c0                movzx  eax,ax
+// 0f b6 c0                movzx  eax,al
+    
+// 66 0f b6 c0             movzx  ax,al
+    
+// 89 e4                   mov    esp,esp
+// 48 0f b7 e4             movzx  rsp,sp
+// 48 0f b6 e4             movzx  rsp,spl
+    
+// 0f b7 e4                movzx  esp,sp
+// 40 0f b6 e4             movzx  esp,spl
+    
+// 66 40 0f b6 e4          movzx  sp,spl
+    
+    assert(size_to == 2 || size_to == 4 || size_to == 8);
+    assert(size_from == 1 || size_from == 2 || size_from == 4);
+    assert(size_to > size_from);
+    assert(reg <= RDI);
+    
+    if (size_to == 2)
+        byte_push(code, 0x66);
+    
+    uint8_t prefix_val = 0x00;
+    if ((size_to == 1 || size_from == 1) && reg >= RSP)
+        prefix_val |= 0x40;
+    if (prefix_val != 0x00)
+        byte_push(code, prefix_val);
+    
+    if (size_to == 8 && size_from == 4)
+        byte_push(code, 0x89);
+    else
+    {
+        byte_push(code, 0x0F);
+        byte_push(code, (size_from == 1) ? 0xB6 : 0xB7);
+    }
+    byte_push(code, 0xC0 | reg | (reg << 3));
+}
+
+// MOVSX to same register
+// RDI and lower only
+void emit_sign_extend(int reg, int size_to, int size_from)
+{
+    last_is_terminator = 0;
+    
+// 48 63 c0                movsxd rax,eax
+// 48 0f bf c0             movsx  rax,ax
+// 48 0f be c0             movsx  rax,al
+    
+// 0f bf c0                movsx  eax,ax
+// 0f be c0                movsx  eax,al
+    
+// 66 0f be c0             movsx  ax,al
+    
+// 48 63 e4                movsxd rsp,esp
+// 48 0f bf e4             movsx  rsp,sp
+// 48 0f be e4             movsx  rsp,spl
+    
+// 0f bf e4                movsx  esp,sp
+// 40 0f be e4             movsx  esp,spl
+    
+// 66 40 0f be e4          movsx  sp,spl
+    
+    assert(size_to == 2 || size_to == 4 || size_to == 8);
+    assert(size_from == 1 || size_from == 2 || size_from == 4);
+    assert(size_to > size_from);
+    assert(reg <= RDI);
+    
+    if (size_to == 2)
+        byte_push(code, 0x66);
+    
+    uint8_t prefix_val = 0x00;
+    if (size_to == 8)
+        prefix_val |= 0x48;
+    else if ((size_to == 1 || size_from == 1) && reg >= RSP)
+        prefix_val |= 0x40;
+    if (prefix_val != 0x00)
+        byte_push(code, prefix_val);
+    
+    if (size_to == 8 && size_from == 4)
+        byte_push(code, 0x63);
+    else
+    {
+        byte_push(code, 0x0F);
+        byte_push(code, (size_from == 1) ? 0xBE : 0xBF);
+    }
+    byte_push(code, 0xC0 | reg | (reg << 3));
+}
+
 void emit_cmov(int reg_d, int reg_s, int cond, int size)
 {
     last_is_terminator = 0;
@@ -331,6 +496,9 @@ void emit_cmov(int reg_d, int reg_s, int cond, int size)
     
     EMIT_LEN_PREFIX(reg_d, reg_s);
     
+    reg_d &= 7;
+    reg_s &= 7;
+    
     byte_push(code, 0x0F);
     byte_push(code, 0x40 | cond);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
@@ -339,6 +507,11 @@ void emit_cmov(int reg_d, int reg_s, int cond, int size)
 void emit_mov(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
+    
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    reg_d &= 7;
+    reg_s &= 7;
     
     emit_addlike(reg_d, reg_s, size, 0x88);
     /*
@@ -432,37 +605,76 @@ void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
     else if (reg_d == RDX && preg_s == RAX)
         byte_push(code, 0x10);
 }
+
 void emit_push(int reg)
 {
     last_is_terminator = 0;
     byte_push(code, 0x50 | reg);
 }
-
-/*
-// TODO
-void emit_xmm(int reg, int size)
-{
-    
-// 48 83 ec 10                  sub    rsp, 0x10
-// f3 0f 7f 84 24 00 00 00 00   movdqu XMMWORD PTR [rsp+0x0],xmm0
-// f3 0f 6f 84 24 00 00 00 00   movdqu xmm0,XMMWORD PTR [rsp+0x0]
-// 48 83 c4 10                  add    rsp, 0x10
-    
-    assert(size == 4 || size == 8);
-}
-*/
-
 void emit_pop(int reg)
 {
     last_is_terminator = 0;
     byte_push(code, 0x58 | reg);
 }
 
+// pushes 4 or 8 bytes (not 16 bytes) of an xmm register
+void emit_xmm_push(int reg, int size)
+{
+    last_is_terminator = 0;
+    
+// 48 83 ec 08             sub    rsp, 8
+// 66 0f 7e 04 24          movd   DWORD PTR [rsp],xmm0
+// 66 0f 7e 0c 24          movd   DWORD PTR [rsp],xmm1
+// 66 0f d6 04 24          movq   QWORD PTR [rsp],xmm0
+// 66 0f d6 0c 24          movq   QWORD PTR [rsp],xmm1
+    
+    assert(reg >= XMM0 && reg <= XMM7);
+    assert(size == 4 || size == 8);
+    
+    reg &= 7;
+    
+    byte_push(code, 0x48);
+    byte_push(code, 0x83);
+    byte_push(code, 0xEC);
+    byte_push(code, 0x08);
+    
+    byte_push(code, 0x66);
+    byte_push(code, 0x0F);
+    byte_push(code, (size == 4) ? 0x7E : 0xD6);
+    byte_push(code, 0x04 | (reg << 3));
+    byte_push(code, 0x24);
+}
+void emit_xmm_pop(int reg, int size)
+{
+    last_is_terminator = 0;
+    
+// 66 0f 6e 04 24          movd   xmm0,DWORD PTR [rsp]
+// 66 0f 6e 0c 24          movd   xmm1,DWORD PTR [rsp]
+// f3 0f 7e 04 24          movq   xmm0,QWORD PTR [rsp]
+// f3 0f 7e 0c 24          movq   xmm1,QWORD PTR [rsp]
+// 48 83 c4 08             add    rsp, 8
+    
+    assert(reg >= XMM0 && reg <= XMM7);
+    assert(size == 4 || size == 8);
+    
+    reg &= 7;
+    
+    byte_push(code, (size == 4) ? 0x66 : 0xF3);
+    byte_push(code, 0x0F);
+    byte_push(code, (size == 4) ? 0x6E : 0x7E);
+    byte_push(code, 0x04 | (reg << 3));
+    byte_push(code, 0x24);
+    
+    byte_push(code, 0x48);
+    byte_push(code, 0x83);
+    byte_push(code, 0xC4);
+    byte_push(code, 0x08);
+}
 
 void emit_shl(int reg, size_t size)
 {
     last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
+    EMIT_LEN_PREFIX(reg, 0);
     
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xE0 | reg);
@@ -470,7 +682,7 @@ void emit_shl(int reg, size_t size)
 void emit_shr(int reg, size_t size)
 {
     last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
+    EMIT_LEN_PREFIX(reg, 0);
     
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xE8 | reg);
@@ -478,7 +690,7 @@ void emit_shr(int reg, size_t size)
 void emit_sar(int reg, size_t size)
 {
     last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
+    EMIT_LEN_PREFIX(reg, 0);
     
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xF8 | reg);
@@ -487,12 +699,11 @@ void emit_sar(int reg, size_t size)
 void emit_mov_imm(int reg, uint64_t val, size_t size)
 {
     last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, reg);
+    EMIT_LEN_PREFIX(reg, 0);
     
     byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
     bytes_push_int(code, (uint64_t)val, size);
 }
-// may clobber RAX if val doesn't fit in 32 bits
 void emit_push_val(int64_t val)
 {
     last_is_terminator = 0;
@@ -521,9 +732,14 @@ void emit_push_val(int64_t val)
     }
     else
     {
-        // mov into rax and push rax
-        emit_mov_imm(RAX, val, 8);
-        emit_push(RAX);
+        byte_push(code, 0x68);
+        bytes_push_int(code, (uint64_t)val, 4);
+        byte_push(code, 0x48);
+        byte_push(code, 0xC7);
+        byte_push(code, 0x44);
+        byte_push(code, 0x24);
+        byte_push(code, 0x04);
+        bytes_push_int(code, ((uint64_t)val) >> 32, 4);
     }
 }
 void emit_mov_offset(int reg1, int reg2, int64_t offset, size_t size)
