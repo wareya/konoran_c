@@ -975,6 +975,34 @@ void emit_sar(int reg, size_t size)
     byte_push(code, 0xF8 | reg);
 }
 
+void emit_shl_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xE0 | reg);
+    byte_push(code, imm);
+}
+void emit_shr_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xE8 | reg);
+    byte_push(code, imm);
+}
+void emit_sar_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xF8 | reg);
+    byte_push(code, imm);
+}
+
 void emit_mov_imm(int reg, uint64_t val, size_t size)
 {
     last_is_terminator = 0;

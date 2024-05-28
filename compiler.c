@@ -1126,7 +1126,9 @@ void compile_code(Node * ast, int want_ptr)
             uint64_t f64_i_minf[] = {0xC060000000000000, 0xC0E0000000000000, 0xC1E0000000000000, 0xC3E0000000000000};
             
             uint8_t slot = type->size == 1 ? 0 : type->size == 2 ? 1 : type->size == 4 ? 2 : 3;
-            uint8_t cast_size = 8;//type->size <= 4 ? 4 : 8;
+            // always cast to 8 bytes even if fewer are necessary
+            // this simplifies some of the later code
+            uint8_t cast_size = 8;
             
             emit_xmm_pop_safe(XMM0, expr_type->size);
             
@@ -1149,8 +1151,6 @@ void compile_code(Node * ast, int want_ptr)
                 emit_compare_float(XMM0, XMM1, expr_type->size);
                 emit_mov_imm(RAX, i_mini[slot], type->size);
                 emit_jmp_cond_short(0, label_anon_num, J_ULE); // branch taken if NaN
-                
-                // FIXME: handle large 64-bit integer output properly
                 
                 emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
                 
@@ -1175,13 +1175,35 @@ void compile_code(Node * ast, int want_ptr)
                 emit_bt(RAX, expr_type->size - 1);
                 emit_jmp_cond_short(0, label_anon_num, J_EQ);
                 
-                // FIXME: handle large 64-bit integer output properly
+                if (type->size == 8)
+                {
+                    puts("emitting extended u64 casting harness...");
+                    
+                    // if >= half of maximum
+                    if (expr_type->size == 4)
+                        emit_mov_imm(RAX, 0x5F000000, 4);
+                    else
+                        emit_mov_imm(RAX, 0x43E0000000000000, 8);
+                    emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                    emit_compare_float(XMM0, XMM1, expr_type->size);
+                    
+                    emit_jmp_cond_short(0, label_anon_num + 1, J_ULE); // taken if NaN, skipping manual conversion
+                    
+                    // chop off high bits
+                    emit_mov_base_from_xmm(RAX, XMM0, type->size);
+                    emit_shl_imm(RAX, (expr_type->size == 4) ? 41 : 12, 8);
+                    emit_shr_imm(RAX, 1, 8);
+                    emit_bts(RAX, 63);
+                    
+                    emit_jmp_short(0, label_anon_num);
+                }
                 
+                emit_label(0, label_anon_num + 1);
                 emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
                 
                 emit_label(0, label_anon_num);
                 emit_push_safe(RAX);
-                label_anon_num += 1;
+                label_anon_num += 2;
             }
             
             Value * value = new_value(type);

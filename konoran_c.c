@@ -73,6 +73,7 @@ int main(int argc, char ** argv)
     
     int64_t asdf = 91543;
     printf("%lld\n", asdf);
+    printf("%llu\n", asdf);
 
 // suppress wrong/non-posix GCC warning
 #pragma GCC diagnostic push
@@ -83,6 +84,8 @@ int main(int argc, char ** argv)
     asdf = jit_func(152);
     
     printf("%lld\n", asdf);
+    printf("%llu\n", asdf);
+    printf("%llX\n", asdf);
     puts("whee!");
     
     free_as_executable(jit_code);
