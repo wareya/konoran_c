@@ -142,15 +142,15 @@ enum {
     J_EQ = 0x4,
     J_NE = 0x5,
     // for unsigned
-    J_ULE = 0x6, // JBE
-    J_UGT = 0x7, // NULE
-    J_ULT = 0x2, // JB
-    J_UGE = 0x3, // NULT
+    J_ULE = 0x6, // BE
+    J_UGT = 0x7, // A
+    J_ULT = 0x2, // B
+    J_UGE = 0x3, // AE
     // for signed:
-    J_SLT = 0xC, // JLT
-    J_SGE = 0xD, // NLT
-    J_SLE = 0xE,
-    J_SGT = 0xF, // NLE
+    J_SLT = 0xC, // LT
+    J_SGE = 0xD, // GE
+    J_SLE = 0xE, // LE
+    J_SGT = 0xF, // GT
 };
 void emit_jmp_short(char * label, size_t num)
 {
@@ -223,11 +223,13 @@ void emit_ret(void)
 
 void emit_sub_imm(int reg, int64_t val)
 {
+    last_is_terminator = 0;
+    
     assert(reg <= RDI);
     
     if (val == 0) // NOP
         return;
-    last_is_terminator = 0;
+    
     assert(("negative or 64-bit immediate subtraction not yet supported", (val > 0 && val <= 2147483647)));
     byte_push(code, 0x48);
     if (reg == RAX && val > 0x7F)
@@ -250,11 +252,13 @@ void emit_sub_imm(int reg, int64_t val)
 }
 void emit_add_imm(int reg, int64_t val)
 {
+    last_is_terminator = 0;
+    
     assert(reg <= RDI);
     
     if (val == 0) // NOP
         return;
-    last_is_terminator = 0;
+    
     assert(("negative or 64-bit immediate addition not yet supported", (val > 0 && val <= 2147483647)));
     byte_push(code, 0x48);
     if (reg == RAX && val > 0x7F)
@@ -326,6 +330,7 @@ void emit_add_imm(int reg, int64_t val)
 void emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
 {
     last_is_terminator = 0;
+    
     EMIT_LEN_PREFIX(reg_d, reg_s);
     reg_d &= 7;
     reg_s &= 7;
@@ -364,6 +369,7 @@ void emit_or(int reg_d, int reg_s, size_t size)
 void emit_mullike(int reg, size_t size, uint8_t maskee)
 {
     last_is_terminator = 0;
+    
     EMIT_LEN_PREFIX(reg, 0);
     reg &= 7;
     
@@ -386,6 +392,202 @@ void emit_idiv(int reg, size_t size)
 {
     emit_mullike(reg, size, 0xF8);
 }
+void emit_neg(int reg, size_t size)
+{
+    emit_mullike(reg, size, 0xD8);
+}
+void emit_not(int reg, size_t size)
+{
+    emit_mullike(reg, size, 0xD0);
+}
+
+void emit_xorps(int reg_d, int reg_s)
+{
+//  0f 57 c0                xorps  xmm0,xmm0
+//  0f 57 c7                xorps  xmm0,xmm7
+//  0f 57 ff                xorps  xmm7,xmm7
+    
+    last_is_terminator = 0;
+    assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
+    
+    byte_push(code, 0x0F);
+    byte_push(code, 0x57);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
+void emit_bts(int reg, uint8_t bit)
+{
+    assert(bit <= 63);
+    assert(reg <= RDI);
+    reg &= 7;
+
+// 48 0f ba e8 1f          bts    rax,0x1f
+// 48 0f ba e8 3f          bts    rax,0x3f
+// 0f ba e8 3f             bts    eax,0x3f
+// 48 0f ba ef 1f          bts    rdi,0x1f
+// 48 0f ba ef 3f          bts    rdi,0x3f
+// 0f ba ef 3f             bts    edi,0x3f
+    
+    if (bit >= 32)
+        byte_push(code, 0x48);
+    byte_push(code, 0x0F);
+    byte_push(code, 0xBA);
+    byte_push(code, 0xE8 | reg);
+    byte_push(code, bit);
+}
+void emit_bt(int reg, uint8_t bit)
+{
+    assert(bit <= 63);
+    assert(reg <= RDI);
+    reg &= 7;
+    
+    if (bit >= 32)
+        byte_push(code, 0x48);
+    byte_push(code, 0x0F);
+    byte_push(code, 0xBA);
+    byte_push(code, 0xE0 | reg);
+    byte_push(code, bit);
+}
+
+// ucomiss / ucomisd
+// args: XMM_a, XMM_b
+//
+// compare 32-bit (or 64-bit) floats in xmm registers
+// only sets the ZF, PF, and CF flags. the OF, SF, and AF flags are zeroed.
+// so, the G/GE/L/LE/NG/NGE/NL/NLE comparisons don't work
+//
+// PF is set to 1 if NaN
+// ZF is set if NaN or equal.
+// CF is set if NaN or less than.
+//
+// ? - unknown
+// X - one or the other but not both
+// 1 - always 1
+// 0 - always 0, assuming not NaN
+//
+//      NaN  ==    <   <=    >   >=   !=
+// PF    1    ?    ?    ?    ?    ?    ?
+// ZF    1    1    0    X    0    ?    0
+// CF    1    0    1    X    0    0    ?
+//
+// J_EQ  (==) checks Z == 1
+// J_NE  (!=) checks Z == 0
+// J_ULT (<)  checks C == 1
+// J_ULE (<=) checks C == 1 || Z == 1
+// J_UGT (>)  checks C == 0 && Z == 0
+// J_UGE (>=) checks C == 0
+// 
+// According to IEEE, every comparison with NaN must return false, including ==, EXCEPT for !=, which must return true.
+// Therefore...
+//
+// J_EQ  doesn't work correctly in the NaN case, because it returns 1.
+// J_NE  doesn't work correctly in the NaN case, because it returns 0, when it needs to return 1.
+// J_ULT doesn't work correctly in the NaN case, because it returns 1.
+// J_ULE doesn't work correctly in the NaN case, because it returns 1.
+// J_UGT DOES work correctly in the NaN case, returning 0.
+// J_UGE DOES work correctly in the NaN case, returning 0.
+//
+// The J_I.. condition types don't support float comparisons at all because float comparisons do not set the relevant flags.
+//
+// So, only use the following branch types when compiling float inequalities:
+// J_UGT (>)
+// J_UGE (>=)
+//
+// For == and !=, start with:
+//  <float comparison>
+//  setp al
+//  setne cl
+//  or al, cl
+// the 'or' will set the Z flag to `!(P | NZ)` (compared to the flags from the original comparison)
+//      NaN  ==   !=
+// ZF    0    1    0
+// from there, use J_EQ for == or J_NE for !=
+//
+// compare floats in xmm registers
+void emit_compare_float(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
+    assert(size == 4 || size == 8);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    if (size == 8)
+        byte_push(code, 0x66);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x2E);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
+// f64 to i64
+// f2 48 0f 2c c0          cvttsd2si rax,xmm0
+// f2 4c 0f 2c c0          cvttsd2si r8,xmm0
+// f2 48 0f 2c c7          cvttsd2si rax,xmm7
+// f2 48 0f 2c ff          cvttsd2si rdi,xmm7
+// f2 4c 0f 2c c7          cvttsd2si r8,xmm7
+
+// f32 to i64
+// f3 48 0f 2c c0          cvttss2si rax,xmm0
+// f3 48 0f 2c c7          cvttss2si rax,xmm7
+// f3 48 0f 2c ff          cvttss2si rdi,xmm7
+
+// f64 to i32
+// f2 0f 2c c0             cvttsd2si eax,xmm0
+// f2 0f 2c c7             cvttsd2si eax,xmm7
+// f2 0f 2c ff             cvttsd2si edi,xmm7
+
+// f32 to i32
+// f3 0f 2c c0             cvttss2si eax,xmm0
+// f3 44 0f 2c c0          cvttss2si r8d,xmm0
+// f3 0f 2c c7             cvttss2si eax,xmm7
+// f3 0f 2c ff             cvttss2si edi,xmm7
+// f3 44 0f 2c c7          cvttss2si r8d,xmm7
+
+void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
+{
+    last_is_terminator = 0;
+    assert(size_i == 4 || size_i == 8);
+    assert(size_f == 4 || size_f == 8);
+    assert(reg_d <= R15 && reg_s >= XMM0 && reg_s <= XMM7);
+    
+    byte_push(code, (size_f == 8) ? 0xF2 : 0xF3);
+    
+    if (size_i == 8)
+        byte_push(code, (reg_d >= R8) ? 0x4C : 0x48);
+    else if (reg_d >= R8)
+        byte_push(code, 0x44);
+    
+    byte_push(code, 0x0F);
+    byte_push(code, 0x2C);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
+// i64 to f64
+// f2 48 0f 2a c0          cvtsi2sd xmm0,rax
+// f2 49 0f 2a c0          cvtsi2sd xmm0,r8
+// f2 48 0f 2a f8          cvtsi2sd xmm7,rax
+// f2 48 0f 2a ff          cvtsi2sd xmm7,rdi
+// f2 49 0f 2a f8          cvtsi2sd xmm7,r8
+
+// i64 to f32
+// f3 48 0f 2a c0          cvtsi2ss xmm0,rax
+// f3 48 0f 2a f8          cvtsi2ss xmm7,rax
+// f3 48 0f 2a ff          cvtsi2ss xmm7,rdi
+
+// i32 to f64
+// f2 0f 2a c0             cvtsi2sd xmm0,eax
+// f2 0f 2a f8             cvtsi2sd xmm7,eax
+// f2 0f 2a ff             cvtsi2sd xmm7,edi
+
+// i32 to f32
+// f3 0f 2a c0             cvtsi2ss xmm0,eax
+// f3 41 0f 2a c0          cvtsi2ss xmm0,r8d
+// f3 0f 2a f8             cvtsi2ss xmm7,eax
+// f3 0f 2a ff             cvtsi2ss xmm7,edi
+// f3 41 0f 2a f8          cvtsi2ss xmm7,r8d 
+
+
 
 // MOVZX (or MOV) to same register
 // RDI and lower only
@@ -504,17 +706,93 @@ void emit_cmov(int reg_d, int reg_s, int cond, int size)
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
 
-void emit_mov(int reg_d, int reg_s, size_t size)
+void emit_cset(int reg, int cond)
 {
     last_is_terminator = 0;
     
-    EMIT_LEN_PREFIX(reg_d, reg_s);
+    size_t size = 1;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    reg &= 7;
+    
+    byte_push(code, 0x0F);
+    byte_push(code, 0x90 | cond);
+    byte_push(code, 0xC0 | reg);
+}
+
+// 66 0f 6e c0             movd   xmm0,eax
+// 66 0f 6e c7             movd   xmm0,edi
+// 66 48 0f 6e c0          movq   xmm0,rax
+// 66 48 0f 6e c7          movq   xmm0,rdi
+void emit_mov_xmm_from_base(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    assert(size == 4 || size == 8);
+    assert(reg_d >= XMM0 && reg_d <= XMM7);
+    assert(reg_s <= RDI);
     
     reg_d &= 7;
     reg_s &= 7;
     
+    byte_push(code, 0x66);
+    if (size == 8)
+        byte_push(code, 0x48);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x6E);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+// 66 0f 7e c0             movd   eax,xmm0
+// 66 0f 7e c7             movd   edi,xmm0
+// 66 48 0f 7e c0          movq   rax,xmm0
+// 66 48 0f 7e c7          movq   rdi,xmm0
+void emit_mov_base_from_xmm(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    assert(size == 4 || size == 8);
+    assert(reg_d <= RDI);
+    assert(reg_s >= XMM0 && reg_s <= XMM7);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, 0x66);
+    if (size == 8)
+        byte_push(code, 0x48);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x7E);
+    byte_push(code, 0xC0 | reg_d | (reg_s << 3));
+}
+// f3 0f 7e c0             movq   xmm0,xmm0
+// f3 0f 7e c7             movq   xmm0,xmm7
+// f3 0f 7e ff             movq   xmm7,xmm7
+void emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    assert(size == 4 || size == 8);
+    assert(reg_d >= XMM0 && reg_d <= XMM7);
+    assert(reg_s >= XMM0 && reg_s <= XMM7);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, 0xF3);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x7E);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
+void emit_mov(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    
     emit_addlike(reg_d, reg_s, size, 0x88);
     /*
+    
+    //EMIT_LEN_PREFIX(reg_d, reg_s);
+    
+    //reg_d &= 7;
+    //reg_s &= 7;
+    
     assert(reg_d < 8 && reg_s < 8);
 // 0:  48 89 c0                mov    rax,rax
 // 3:  48 89 c8                mov    rax,rcx
@@ -618,6 +896,7 @@ void emit_pop(int reg)
 }
 
 // pushes 4 or 8 bytes (not 16 bytes) of an xmm register
+// stack always moves by 8 bytes
 void emit_xmm_push(int reg, int size)
 {
     last_is_terminator = 0;
@@ -732,15 +1011,21 @@ void emit_push_val(int64_t val)
     }
     else
     {
+        // push ... (subtracts 8 from rsp)
         byte_push(code, 0x68);
         bytes_push_int(code, (uint64_t)val, 4);
-        byte_push(code, 0x48);
+        // mov dword ptr [rsp+4], ...
         byte_push(code, 0xC7);
         byte_push(code, 0x44);
         byte_push(code, 0x24);
         byte_push(code, 0x04);
         bytes_push_int(code, ((uint64_t)val) >> 32, 4);
     }
+}
+void emit_breakpoint()
+{
+    byte_push(code, 0xCC);
+    last_is_terminator = 0;
 }
 void emit_mov_offset(int reg1, int reg2, int64_t offset, size_t size)
 {

@@ -71,18 +71,18 @@ int main(int argc, char ** argv)
     
     uint8_t * jit_code = copy_as_executable(code->data, code->len);
     
-    uint32_t asdf = 91543;
-    printf("%d\n", asdf);
+    int64_t asdf = 91543;
+    printf("%lld\n", asdf);
 
 // suppress wrong/non-posix GCC warning
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-    int (* jit_func) (int) = (int(*)(int))(void *)jit_code;
+    int64_t (* jit_func) (int) = (int64_t(*)(int))(void *)jit_code;
 #pragma GCC diagnostic pop
     
     asdf = jit_func(152);
     
-    printf("%d\n", asdf);
+    printf("%lld\n", asdf);
     puts("whee!");
     
     free_as_executable(jit_code);

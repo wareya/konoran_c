@@ -561,18 +561,34 @@ enum {
 
 void emit_push_safe(int reg1)
 {
+    puts("emitting base reg push...");
     emit_push(reg1);
     stack_offset += 8;
 }
 void emit_pop_safe(int reg1)
 {
+    puts("emitting base reg pop...");
     emit_pop(reg1);
     stack_offset -= 8;
 }
 void emit_push_val_safe(uint64_t val)
 {
+    puts("emitting val push...");
     emit_push_val(val);
     stack_offset += 8;
+}
+
+void emit_xmm_push_safe(int reg1, int size)
+{
+    puts("emitting XMM push...");
+    emit_xmm_push(reg1, size);
+    stack_offset += 8;
+}
+void emit_xmm_pop_safe(int reg1, int size)
+{
+    puts("emitting XMM pop...");
+    emit_xmm_pop(reg1, size);
+    stack_offset -= 8;
 }
 
 void _push_small_if_const(Value * item)
@@ -587,16 +603,10 @@ void _push_small_if_const(Value * item)
 }
 
 // ops that output the same type that they're given as input
-// +
-// -
-// *
-// /
-// %
+// + - * / %
 // div_unsafe ('d')
 // rem_unsafe ('r')
-// |
-// &
-// ^
+// | & ^
 // << ('<')
 // >> ('>')
 // shl_unsafe ('L')
@@ -878,6 +888,38 @@ void compile_unary_plus(StackItem * val)
     assert(val->val->type->primitive_type <= PRIM_F64);
     stack_push(val);
 }
+void compile_unary_minus(StackItem * val)
+{
+    assert(val->val->type->variant == TYPE_PRIMITIVE);
+    assert(val->val->type->primitive_type >= PRIM_U8);
+    assert(val->val->type->primitive_type <= PRIM_F64);
+    
+    if (val->val->type->primitive_type <= PRIM_I64)
+    {
+        emit_pop_safe(RAX);
+        emit_neg(RAX, val->val->type->size);
+        emit_push_safe(RAX);
+    }
+    else if (val->val->type->primitive_type == PRIM_F32)
+    {
+        emit_xmm_pop_safe(XMM0, 8);
+        emit_xor(RAX, RAX, 8);
+        emit_bts(RAX, 31);
+        emit_mov_xmm_from_base(XMM1, RAX, 8);
+        emit_xorps(XMM0, XMM1);
+        emit_xmm_push_safe(XMM0, 8);
+    }
+    else // PRIM_F64
+    {
+        emit_xmm_pop_safe(XMM0, 8);
+        emit_xor(RAX, RAX, 8);
+        emit_bts(RAX, 63);
+        emit_mov_xmm_from_base(XMM1, RAX, 8);
+        emit_xorps(XMM0, XMM1);
+        emit_xmm_push_safe(XMM0, 8);
+    }
+    stack_push(val);
+}
 
 Type * return_type = 0;
 
@@ -901,8 +943,12 @@ void compile_code(Node * ast, int want_ptr)
             emit_pop_safe(RAX);
         }
         
+        printf("%lld\n", stack_offset);
+        assert(stack_offset == 0);
+        
         emit_add_imm(RSP, stack_loc);
         emit_pop(RBP);
+        //emit_breakpoint();
         emit_ret();
     } break;
     case LABEL:
@@ -1036,7 +1082,7 @@ void compile_code(Node * ast, int want_ptr)
             // size downcast. do nothing.
             if (type->size <= expr_type->size)
             {
-                assert(type->size != expr_type->size || type_is_signed(type) == type_is_signed(expr_type));
+                assert(!(type->size != expr_type->size && type_is_signed(type) != type_is_signed(expr_type)));
                 
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -1060,7 +1106,89 @@ void compile_code(Node * ast, int want_ptr)
         // fast from float to int
         else if (type_is_float(expr_type) && type_is_int(type))
         {
-            assert(("TODO: unsupported float-to-int cast", 0));
+            // Checks for the least extreme possible value in the given float format that can be clamped on.
+            // I *could* create this bit pattern in C code, with type punning or memcpy,
+            // *But*, I want to ensure 100% that the right pattern is used, even on buggy C compilers!
+            
+            uint64_t u_maxi[] = {0xFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF};
+            uint64_t i_maxi[] = {0x7F, 0x7FFF, 0x7FFFFFFF, 0x7FFFFFFFFFFFFFFF};
+            uint64_t i_mini[] = {-128, -32768, -2147483648, -2305843009213693952};
+            // 255.0f32, 65535.0f32, 4294967296.0f32, 18446744073709551616.0f32
+            uint64_t f32_u_maxf[] = {0x437F0000, 0x477FFF00, 0x4F800000, 0x5F800000};
+            // roughly half of the above
+            uint64_t f32_i_maxf[] = {0x42FE0000, 0x46FFFE00, 0x4F000000, 0x5F000000};
+            // roughly negative
+            uint64_t f32_i_minf[] = {0xC3000000, 0xC7000000, 0xCF000000, 0xDF000000};
+            
+            // 64-bit versions
+            uint64_t f64_u_maxf[] = {0x406FE00000000000, 0x40EFFFE000000000, 0x41EFFFFFFFE00000, 0x43F0000000000000};
+            uint64_t f64_i_maxf[] = {0x405FC00000000000, 0x40DFFFC000000000, 0x41DFFFFFFFC00000, 0x43E0000000000000};
+            uint64_t f64_i_minf[] = {0xC060000000000000, 0xC0E0000000000000, 0xC1E0000000000000, 0xC3E0000000000000};
+            
+            uint8_t slot = type->size == 1 ? 0 : type->size == 2 ? 1 : type->size == 4 ? 2 : 3;
+            uint8_t cast_size = 8;//type->size <= 4 ? 4 : 8;
+            
+            emit_xmm_pop_safe(XMM0, expr_type->size);
+            
+            int label_emitted = 0;
+            if (type_is_signed(type))
+            {
+                uint64_t * maxf = (expr_type->size == 4) ? f32_i_maxf : f64_i_maxf;
+                uint64_t * minf = (expr_type->size == 4) ? f32_i_maxf : f64_i_maxf;
+                
+                // if >= maximum
+                emit_mov_imm(RAX, maxf[slot], expr_type->size);
+                emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                emit_compare_float(XMM0, XMM1, expr_type->size);
+                emit_mov_imm(RAX, i_maxi[slot], type->size);
+                emit_jmp_cond_short(0, label_anon_num, J_UGE);
+                
+                // if <= minimum or NaN
+                emit_mov_imm(RAX, minf[slot], expr_type->size);
+                emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                emit_compare_float(XMM0, XMM1, expr_type->size);
+                emit_mov_imm(RAX, i_mini[slot], type->size);
+                emit_jmp_cond_short(0, label_anon_num, J_ULE); // branch taken if NaN
+                
+                // FIXME: handle large 64-bit integer output properly
+                
+                emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
+                
+                emit_label(0, label_anon_num);
+                emit_push_safe(RAX);
+                label_anon_num += 1;
+            }
+            else
+            {
+                uint64_t * maxf = (expr_type->size == 4) ? f32_u_maxf : f64_u_maxf;
+                
+                // if >= maximum
+                emit_mov_imm(RAX, maxf[slot], expr_type->size);
+                emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                emit_compare_float(XMM0, XMM1, expr_type->size);
+                emit_mov_imm(RAX, u_maxi[slot], type->size);
+                emit_jmp_cond_short(0, label_anon_num, J_UGE);
+                
+                // if <= 0.0
+                // (what we actually do is check the sign bit)
+                emit_mov_base_from_xmm(RAX, XMM0, expr_type->size);
+                emit_bt(RAX, expr_type->size - 1);
+                emit_jmp_cond_short(0, label_anon_num, J_EQ);
+                
+                // FIXME: handle large 64-bit integer output properly
+                
+                emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
+                
+                emit_label(0, label_anon_num);
+                emit_push_safe(RAX);
+                label_anon_num += 1;
+            }
+            
+            Value * value = new_value(type);
+            value->kind = VAL_STACK_TOP;
+            stack_push_new(value);
+            
+            //assert(("TODO: unsupported float-to-int cast", 0));
         }
         else
         {
@@ -1115,6 +1243,8 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case NFLOAT:
     {
+        puts("compiling float literal...");
+        
         size_t len = ast->textlen;
         assert(ast->textlen >= 5);
         char * text = strcpy_len(ast->text, ast->textlen);
@@ -1148,8 +1278,14 @@ void compile_code(Node * ast, int want_ptr)
             compile_unary_addrof(ast);
         else
         {
+            puts("compiling unary child...");
             compile_code(nth_child(ast, 1), 0);
+            puts("compiled unary child!");
+            
             StackItem * val = stack_pop();
+            _push_small_if_const(val->val);
+            val->val->kind = VAL_STACK_TOP;
+            
             if (strcmp(op_text, "+") == 0)
                 compile_unary_plus(val);
             else if (strcmp(op_text, "*") == 0)
@@ -1177,14 +1313,18 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     if (val->val->kind == VAL_STACK_TOP)
                     {
-                        //emit_pop_safe(RDX);
-                        //emit_lea(RAX, RDX, 0);
-                        //emit_push_safe(RAX);
                         Value * value = new_value(new_type);
                         value->kind = VAL_ANYWHERE;
                         stack_push_new(value);
                     }
+                    else
+                        assert(("TODO: get non stack top pointers", 0));
                 }
+            }
+            else if (strcmp(op_text, "-") == 0)
+            {
+                puts("compiling unary...");
+                compile_unary_minus(val);
             }
             else
             {
