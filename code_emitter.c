@@ -543,7 +543,6 @@ void emit_compare_float(int reg_d, int reg_s, size_t size)
 // f3 0f 2c c7             cvttss2si eax,xmm7
 // f3 0f 2c ff             cvttss2si edi,xmm7
 // f3 44 0f 2c c7          cvttss2si r8d,xmm7
-
 void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
 {
     last_is_terminator = 0;
@@ -558,8 +557,75 @@ void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
     else if (reg_d >= R8)
         byte_push(code, 0x44);
     
+    reg_d &= 7;
+    reg_s &= 7;
+    
     byte_push(code, 0x0F);
     byte_push(code, 0x2C);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
+// f3 48 0f 2a c0          cvtsi2ss xmm0,rax
+// f3 48 0f 2a f8          cvtsi2ss xmm7,rax
+// f3 48 0f 2a ff          cvtsi2ss xmm7,rdi
+// f2 48 0f 2a c0          cvtsi2sd xmm0,rax
+// f2 48 0f 2a f8          cvtsi2sd xmm7,rax
+// f2 48 0f 2a ff          cvtsi2sd xmm7,rdi
+    
+// f3 0f 2a c0             cvtsi2ss xmm0,eax
+// f3 0f 2a f8             cvtsi2ss xmm7,eax
+// f3 0f 2a ff             cvtsi2ss xmm7,edi
+// f2 0f 2a c0             cvtsi2sd xmm0,eax
+// f2 0f 2a f8             cvtsi2sd xmm7,eax
+// f2 0f 2a ff             cvtsi2sd xmm7,edi
+
+// f2 49 0f 2a f8          cvtsi2sd xmm7,r8
+// f2 41 0f 2a f8          cvtsi2sd xmm7,r8d
+void emit_cast_int_to_float(int reg_d, int reg_s, size_t size_f, size_t size_i)
+{
+    last_is_terminator = 0;
+    assert(size_i == 4 || size_i == 8);
+    assert(size_f == 4 || size_f == 8);
+    assert(reg_s <= R15 && reg_d >= XMM0 && reg_d <= XMM7);
+    
+    byte_push(code, (size_f == 8) ? 0xF2 : 0xF3);
+    
+    if (size_i == 8)
+        byte_push(code, (reg_s >= R8) ? 0x49 : 0x48);
+    else if (reg_s >= R8)
+        byte_push(code, 0x41);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, 0x0F);
+    byte_push(code, 0x2A);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+
+// f3 0f 5a c0             cvtss2sd xmm0,xmm0
+// f3 0f 5a c7             cvtss2sd xmm0,xmm7
+// f3 0f 5a ff             cvtss2sd xmm7,xmm7
+
+// f2 0f 5a c0             cvtsd2ss xmm0,xmm0
+// f2 0f 5a c7             cvtsd2ss xmm0,xmm7
+// f2 0f 5a ff             cvtsd2ss xmm7,xmm7
+void emit_cast_float_to_float(int reg_d, int reg_s, size_t size_d, size_t size_s)
+{
+    last_is_terminator = 0;
+    
+    assert(size_d == 4 || size_d == 8);
+    assert(size_s == 4 || size_s == 8);
+    assert(size_d != size_s);
+    assert(reg_d >= XMM0 && reg_d <= XMM7);
+    assert(reg_s >= XMM0 && reg_s <= XMM7);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, (size_d == 8) ? 0xF3 : 0xF2);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x5A);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
 

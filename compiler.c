@@ -1067,18 +1067,27 @@ void compile_code(Node * ast, int want_ptr)
     case CAST:
     {
         compile_code(nth_child(ast, 0), 0);
-        Value * expr = stack_pop()->val;
+        StackItem * stackitem = stack_pop();
+        Value * expr = stackitem->val;
         Type * type = parse_type(nth_child(ast, 1));
         assert(expr);
         // FIXME non-prim-sized types
         assert(expr->type->size <= 8);
         assert(type->size <= 8);
         
-        _push_small_if_const(expr);
+        // FIXME handle non-const
+        
         Type * expr_type = expr->type;
         
-        if (type_is_int(expr_type) && type_is_int(type))
+        if (types_same(expr_type, type))
         {
+            // cast to same type, do nothing
+            stack_push(stackitem);
+        }
+        else if (type_is_int(expr_type) && type_is_int(type))
+        {
+            _push_small_if_const(expr);
+            
             // size downcast. do nothing.
             if (type->size <= expr_type->size)
             {
@@ -1103,9 +1112,11 @@ void compile_code(Node * ast, int want_ptr)
                 stack_push_new(value);
             }
         }
-        // fast from float to int
+        // cast from float to int
         else if (type_is_float(expr_type) && type_is_int(type))
         {
+            _push_small_if_const(expr);
+            
             // Checks for the least extreme possible value in the given float format that can be clamped on.
             // I *could* create this bit pattern in C code, with type punning or memcpy,
             // *But*, I want to ensure 100% that the right pattern is used, even on buggy C compilers!
@@ -1148,7 +1159,7 @@ void compile_code(Node * ast, int want_ptr)
                 // if <= minimum or NaN
                 emit_mov_imm(RAX, minf[slot], expr_type->size);
                 emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
-                emit_compare_float(XMM0, XMM1, expr_type->size);
+                emit_compare_float(XMM1, XMM0, expr_type->size);
                 emit_mov_imm(RAX, i_mini[slot], type->size);
                 emit_jmp_cond_short(0, label_anon_num, J_ULE); // branch taken if NaN
                 
@@ -1189,16 +1200,19 @@ void compile_code(Node * ast, int want_ptr)
                     
                     emit_jmp_cond_short(0, label_anon_num + 1, J_ULE); // taken if NaN, skipping manual conversion
                     
+                    // manually cast using bit trickery
                     // chop off high bits
                     emit_mov_base_from_xmm(RAX, XMM0, type->size);
                     emit_shl_imm(RAX, (expr_type->size == 4) ? 41 : 12, 8);
+                    // add implicit leading 1
                     emit_shr_imm(RAX, 1, 8);
                     emit_bts(RAX, 63);
                     
                     emit_jmp_short(0, label_anon_num);
+                    
+                    emit_label(0, label_anon_num + 1);
                 }
                 
-                emit_label(0, label_anon_num + 1);
                 emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
                 
                 emit_label(0, label_anon_num);
@@ -1209,8 +1223,26 @@ void compile_code(Node * ast, int want_ptr)
             Value * value = new_value(type);
             value->kind = VAL_STACK_TOP;
             stack_push_new(value);
+        }
+        else if (type_is_float(expr_type) && type_is_float(type))
+        {
+            _push_small_if_const(expr);
             
-            //assert(("TODO: unsupported float-to-int cast", 0));
+            assert(expr_type->size != type->size);
+            
+            emit_xmm_pop_safe(XMM0, expr_type->size);
+            emit_cast_float_to_float(XMM0, XMM0, type->size, expr_type->size);
+            emit_xmm_push_safe(XMM0, type->size);
+            
+            Value * value = new_value(type);
+            value->kind = VAL_STACK_TOP;
+            stack_push_new(value);
+        }
+        else if (type_is_float(expr_type) && type_is_int(type))
+        {
+            _push_small_if_const(expr);
+            
+            assert(("TODO: int to float cast", 0));
         }
         else
         {
