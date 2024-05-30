@@ -16,7 +16,7 @@ enum {
     RSI,
     RDI,
     // higher registers always have weird encodings (instead of just sometimes) so we don't support generating them in all functions
-    R8 = 0x10,
+    R8 = 0x100,
     R9,
     R10,
     R11,
@@ -405,6 +405,49 @@ void emit_not(int reg, size_t size)
     emit_mullike(reg, size, 0xD0);
 }
 
+void emit_float_op(int reg_d, int reg_s, size_t size, uint8_t op)
+{
+// f3 0f 59 c0             mulss  xmm0,xmm0
+// f3 0f 59 c7             mulss  xmm0,xmm7
+// f3 0f 59 ff             mulss  xmm7,xmm7
+// f3 0f 5e c0             divss  xmm0,xmm0
+// f3 0f 58 c0             addss  xmm0,xmm0
+// f3 0f 5c c0             subss  xmm0,xmm0
+    
+// f2 0f 59 c0             mulsd  xmm0,xmm0
+// f2 0f 5e c0             divsd  xmm0,xmm0
+// f2 0f 58 c0             addsd  xmm0,xmm0
+// f2 0f 5c c0             subsd  xmm0,xmm0
+    
+    last_is_terminator = 0;
+    assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
+    assert(size == 4 || size == 8);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, (size == 8) ? 0xF2 : 0xF3);
+    byte_push(code, 0x0F);
+    byte_push(code, op);
+    byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+void emit_float_mul(int reg_d, int reg_s, size_t size)
+{
+    emit_float_op(reg_d, reg_s, size, 0x59);
+}
+void emit_float_div(int reg_d, int reg_s, size_t size)
+{
+    emit_float_op(reg_d, reg_s, size, 0x5E);
+}
+void emit_float_add(int reg_d, int reg_s, size_t size)
+{
+    emit_float_op(reg_d, reg_s, size, 0x58);
+}
+void emit_float_sub(int reg_d, int reg_s, size_t size)
+{
+    emit_float_op(reg_d, reg_s, size, 0x5C);
+}
+
 void emit_xorps(int reg_d, int reg_s)
 {
 //  0f 57 c0                xorps  xmm0,xmm0
@@ -413,6 +456,9 @@ void emit_xorps(int reg_d, int reg_s)
     
     last_is_terminator = 0;
     assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
+    
+    reg_d &= 7;
+    reg_s &= 7;
     
     byte_push(code, 0x0F);
     byte_push(code, 0x57);

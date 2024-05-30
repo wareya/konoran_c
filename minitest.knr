@@ -3,7 +3,9 @@ constexpr i32 myglobal = 69i32 + 5i32;
 i64 main()//i32 asdf2asdf)
 {
     //return (16452.2f32 / 952.562f32) as i64;
-    return (16452.2f32 / 952.562f32) as i64;
+    f32 a = 16452.2f32;
+    f32 b = 952.562f32;
+    return (a / b) as i64;
     
     //return (((130564946292942592459123.253f32) as u32) as u64) as i64;
     //return ((9423372036854776000.253f32) as u64) as i64;

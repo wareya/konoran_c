@@ -786,7 +786,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 else if (op == '/')
                     out = left_ / right_;
                 else if (op == '%')
-                    out = remainder(left_, right_);
+                    out = fmod(left_, right_);
                 else
                     assert(("operation not supported on f64s", 0));
                 
@@ -808,7 +808,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 else if (op == '/')
                     out = left_ / right_;
                 else if (op == '%')
-                    out = remainderf(left_, right_);
+                    out = fmodf(left_, right_);
                 else
                     assert(("operation not supported on f32s", 0));
                 
@@ -914,6 +914,76 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         }
         else
             assert(("other ops not implemented yet!", 0));
+    }
+    else if (type_is_float(left->val->type))
+    {
+        _push_small_if_const(right->val);
+        emit_xmm_pop_safe(XMM1, size);
+        _push_small_if_const(left->val);
+        emit_xmm_pop_safe(XMM0, size);
+        
+        if (op == '+')
+        {
+            emit_float_add(XMM0, XMM1, size);
+            emit_xmm_push_safe(XMM0, size);
+        }
+        else if (op == '-')
+        {
+            emit_float_sub(XMM0, XMM1, size);
+            emit_xmm_push_safe(XMM0, size);
+        }
+        else if (op == '*')
+        {
+            emit_float_mul(XMM0, XMM1, size);
+            emit_xmm_push_safe(XMM0, size);
+        }
+        else if (op == '/')
+        {
+            emit_float_div(XMM0, XMM1, size);
+            emit_xmm_push_safe(XMM0, size);
+        }
+        else
+            assert(("other float ops not implemented yet!", 0));
+/*
+// trunc for f32
+0:  66 0f 7e c0             movd   eax,xmm0
+4:  89 c1                   mov    ecx,eax
+6:  c1 e9 17                shr    ecx,0x17
+9:  80 e9 7f                sub    cl,0x7f
+c:  78 14                   js     22 <L6>
+e:  80 f9 1f                cmp    cl,0x1f
+11: 7f 18                   jg     2b <out>
+13: ba 00 00 80 ff          mov    edx,0xff800000
+18: d3 fa                   sar    edx,cl
+1a: 21 c2                   and    edx,eax
+1c: 66 0f 6e c2             movd   xmm0,edx
+20: eb 09                   jmp    2b <out>
+0000000000000022 <L6>:
+22: 25 00 00 00 80          and    eax,0x80000000
+27: 66 0f 6e c0             movd   xmm0,eax
+
+// trunc for f64
+0:  66 48 0f 7e c0          movq   rax,xmm0
+5:  48 89 c1                mov    rcx,rax
+8:  48 c1 e9 1f             shr    rcx,0x1f
+c:  81 c1 00 00 20 80       add    ecx,0x80200000
+12: c1 f9 15                sar    ecx,0x15
+15: 78 1c                   js     33 <LBB1_1>
+17: 83 f9 3f                cmp    ecx,0x3f
+1a: 77 29                   ja     45 <out>
+1c: 48 ba 00 00 00 00 00    movabs rdx,0xfff0000000000000
+23: 00 f0 ff
+26: 48 d3 fa                sar    rdx,cl
+29: 48 21 d0                and    rax,rdx
+2c: 66 48 0f 6e c0          movq   xmm0,rax
+31: eb 12                   jmp    45 <out>
+0000000000000033 <LBB1_1>:
+33: 48 ba 00 00 00 00 00    movabs rdx,0x8000000000000000
+3a: 00 00 80
+3d: 48 21 d0                and    rax,rdx
+40: 66 48 0f 6e c0          movq   xmm0,rax
+*/
+        
     }
     
     Value * value = new_value(left->val->type);
