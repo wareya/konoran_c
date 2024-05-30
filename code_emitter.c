@@ -1120,7 +1120,7 @@ void emit_push_val(int64_t val)
         bytes_push_int(code, ((uint64_t)val) >> 32, 4);
     }
 }
-void emit_breakpoint()
+void emit_breakpoint(void)
 {
     byte_push(code, 0xCC);
     last_is_terminator = 0;

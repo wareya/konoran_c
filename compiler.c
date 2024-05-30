@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <assert.h>
+#include <math.h> // remainder, remainderf
 #include "buffers.h"
 
 #ifndef zalloc
@@ -11,7 +12,7 @@
 
 byte_buffer * code = 0;
 byte_buffer * static_data = 0;
-size_t global_data_len = 0;
+size_t globaleft_ata_len = 0;
 
 #include "code_emitter.c"
 
@@ -769,7 +770,56 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         }
         else if (is_float)
         {
-            assert(("float ops not implemented yet!", 0));
+            if (size == 8)
+            {
+                double left_, right_;
+                memcpy(&left_, &left->val->_val, 8);
+                memcpy(&right_, &right->val->_val, 8);
+                double out = 0.0;
+                
+                if (op == '+')
+                    out = left_ + right_;
+                else if (op == '-')
+                    out = left_ - right_;
+                else if (op == '*')
+                    out = left_ * right_;
+                else if (op == '/')
+                    out = left_ / right_;
+                else if (op == '%')
+                    out = remainder(left_, right_);
+                else
+                    assert(("operation not supported on f64s", 0));
+                
+                memcpy(&value->_val, &out, 8);
+            }
+            else if (size == 4)
+            {
+                float left_, right_;
+                memcpy(&left_, &left->val->_val, 4);
+                memcpy(&right_, &right->val->_val, 4);
+                float out = 0.0;
+                
+                if (op == '+')
+                    out = left_ + right_;
+                else if (op == '-')
+                    out = left_ - right_;
+                else if (op == '*')
+                    out = left_ * right_;
+                else if (op == '/')
+                    out = left_ / right_;
+                else if (op == '%')
+                    out = remainderf(left_, right_);
+                else
+                    assert(("operation not supported on f32s", 0));
+                
+                memcpy(&value->_val, &out, 4);
+            }
+            else
+                assert(("Internal error: broken float type", 0));
+        }
+        else
+        {
+            assert(("Unsupported type set for constexpr infix operations", 0));
         }
         stack_push_new(value);
         return;
@@ -1381,8 +1431,8 @@ void compile_code(Node * ast, int want_ptr)
         value->_val = 0;
         if (size == 8)
         {
-            double val_d = strtod(text, &_dummy);
-            memcpy(&value->_val, &val_d, 8);
+            double valeft_ = strtod(text, &_dummy);
+            memcpy(&value->_val, &valeft_, 8);
         }
         else
         {
