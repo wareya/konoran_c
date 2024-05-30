@@ -356,6 +356,10 @@ void emit_test(int reg_d, int reg_s, size_t size)
 }
 void emit_xor(int reg_d, int reg_s, size_t size)
 {
+    // smaller encoding, same behavior (ops on 32-bit registers clear the upper bytes)
+    if (reg_d == reg_s && size == 8)
+        size = 4;
+    
     emit_addlike(reg_d, reg_s, size, 0x30);
 }
 void emit_and(int reg_d, int reg_s, size_t size)

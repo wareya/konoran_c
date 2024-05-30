@@ -1138,7 +1138,7 @@ void compile_code(Node * ast, int want_ptr)
             
             uint8_t slot = type->size == 1 ? 0 : type->size == 2 ? 1 : type->size == 4 ? 2 : 3;
             // always cast to 8 bytes even if fewer are necessary
-            // this simplifies some of the later code
+            // this simplifies casting to u32 (don't need to check against 2147483648) and will still produce the right value
             uint8_t cast_size = 8;
             
             emit_xmm_pop_safe(XMM0, expr_type->size);
@@ -1183,33 +1183,31 @@ void compile_code(Node * ast, int want_ptr)
                 // if <= 0.0
                 // (what we actually do is check the sign bit)
                 emit_mov_base_from_xmm(RAX, XMM0, expr_type->size);
-                emit_bt(RAX, expr_type->size - 1);
-                emit_jmp_cond_short(0, label_anon_num, J_EQ);
+                emit_bt(RAX, (expr_type->size * 8) - 1);
+                emit_mov_imm(RAX, 0, 4);
+                emit_jmp_cond_short(0, label_anon_num, J_ULT); // branch taken if NaN
                 
                 if (type->size == 8)
                 {
-                    puts("emitting extended u64 casting harness...");
-                    
                     // if >= half of maximum
                     if (expr_type->size == 4)
                         emit_mov_imm(RAX, 0x5F000000, 4);
                     else
                         emit_mov_imm(RAX, 0x43E0000000000000, 8);
+                    
                     emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
                     emit_compare_float(XMM0, XMM1, expr_type->size);
                     
-                    emit_jmp_cond_short(0, label_anon_num + 1, J_ULE); // taken if NaN, skipping manual conversion
+                    emit_jmp_cond_short(0, label_anon_num + 1, J_ULT); // taken if NaN, skipping manual conversion
                     
                     // manually cast using bit trickery
                     // chop off high bits
                     emit_mov_base_from_xmm(RAX, XMM0, type->size);
-                    emit_shl_imm(RAX, (expr_type->size == 4) ? 41 : 12, 8);
+                    emit_shl_imm(RAX, (expr_type->size == 4) ? 40 : 11, 8);
                     // add implicit leading 1
-                    emit_shr_imm(RAX, 1, 8);
                     emit_bts(RAX, 63);
                     
                     emit_jmp_short(0, label_anon_num);
-                    
                     emit_label(0, label_anon_num + 1);
                 }
                 
@@ -1238,11 +1236,77 @@ void compile_code(Node * ast, int want_ptr)
             value->kind = VAL_STACK_TOP;
             stack_push_new(value);
         }
-        else if (type_is_float(expr_type) && type_is_int(type))
+        else if (type_is_int(expr_type) && type_is_float(type))
         {
             _push_small_if_const(expr);
             
-            assert(("TODO: int to float cast", 0));
+            emit_pop_safe(RAX);
+            
+            // direct conversion if it would overflow into negative
+            // don't need one for 4-byte numbers because we extend them to 8 bytes and they won't overflow
+            if (expr_type->size == 8 && !type_is_signed(expr_type))
+            {
+                emit_bt(RAX, 63);
+                
+                emit_jmp_cond_short(0, label_anon_num + 1, J_UGE);
+                
+                if (type->size == 8)
+                {
+                    emit_shr_imm(RAX, 10, 8);
+                    emit_mov(RDX, RAX, 8);
+                    emit_add_imm(RDX, 1);
+                    emit_bt(RDX, 54);
+                    emit_cmov(RAX, RDX, J_UGE, 8);
+                    emit_shr_imm(RAX, 1, 8);
+                    // 53rd bit intentionally set to flip MSB of value
+                    emit_mov_imm(RDX, 0x43F0000000000000, 8);
+                    emit_xor(RAX, RDX, 8);
+                }
+                else
+                {
+                    emit_shr_imm(RAX, 39, 8);
+                    emit_mov(RDX, RAX, 4);
+                    emit_add_imm(RDX, 1);
+                    emit_bt(RDX, 25);
+                    emit_cmov(RAX, RDX, J_UGE, 4);
+                    emit_shr_imm(RAX, 1, 4);
+                    
+                    emit_mov_imm(RDX, 0x5F800000, 4);
+                    //emit_mov_imm(RDX, 0, 4);
+                    emit_xor(RAX, RDX, 4);
+                }
+                
+                // matched with emit_xmm_push_safe below
+                emit_push(RAX);
+                
+                emit_jmp_short(0, label_anon_num);
+                emit_label(0, label_anon_num + 1);
+            }
+            
+            // normal conversion
+            if (expr_type->size == 4 && type_is_signed(expr_type))
+                emit_sign_extend(RAX, 8, 4);
+            else if (expr_type->size == 4)
+                emit_zero_extend(RAX, 8, 4);
+            else if (expr_type->size < 4 && type_is_signed(expr_type))
+                emit_sign_extend(RAX, 4, expr_type->size);
+            else if (expr_type->size < 4)
+                emit_zero_extend(RAX, 4, expr_type->size);
+            
+            int real_size = (expr_type->size >= 4) ? 8 : 4;
+            
+            // perform cast
+            emit_cast_int_to_float(XMM0, RAX, type->size, real_size);
+            
+            // matched with emit_push above
+            emit_xmm_push_safe(XMM0, expr_type->size);
+            
+            emit_label(0, label_anon_num);
+            label_anon_num += 2;
+            
+            Value * value = new_value(type);
+            value->kind = VAL_STACK_TOP;
+            stack_push_new(value);
         }
         else
         {
@@ -1309,8 +1373,6 @@ void compile_code(Node * ast, int want_ptr)
         ptrdiff_t val_length = typename - text;
         
         char * _dummy = 0;
-        double val_d = strtod(text, &_dummy);
-        float val_f = val_d;
         
         Type * type = get_type(typename);
         Value * value = new_value(type);
@@ -1318,9 +1380,15 @@ void compile_code(Node * ast, int want_ptr)
         
         value->_val = 0;
         if (size == 8)
+        {
+            double val_d = strtod(text, &_dummy);
             memcpy(&value->_val, &val_d, 8);
+        }
         else
+        {
+            float val_f = strtof(text, &_dummy);
             memcpy(&value->_val, &val_f, 4);
+        }
         
         stack_push_new(value);
     } break;
