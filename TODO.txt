@@ -1,0 +1,6 @@
+konoran C todo list:
+- equality operators
+- composite types
+- constexpr stuff
+- missing some stuff about globals
+- ABI / calling convention

@@ -765,6 +765,12 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 value->_val = left->val->_val | right->val->_val;
             else if (op == '^')
                 value->_val = left->val->_val ^ right->val->_val;
+            else if (op == 'a')
+                value->_val = (!!left->val->_val) && (!!right->val->_val);
+            else if (op == 'o')
+                value->_val = (!!left->val->_val) || (!!right->val->_val);
+            else
+                assert(("internal error: unknown infix integer op", 0));
             
             value->_val &= size_mask;
         }
@@ -910,6 +916,18 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_shr(RAX, size);
             else
                 emit_shl(RAX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == 'a' || op == 'o')
+        {
+            emit_test(RAX, RAX, size);
+            emit_cset(RAX, J_NE);
+            emit_test(RDX, RDX, size);
+            emit_cset(RDX, J_NE);
+            if (op == 'a')
+                emit_and(RAX, RDX, 1);
+            else
+                emit_or(RAX, RDX, 1);
             emit_push_safe(RAX);
         }
         else
@@ -1602,17 +1620,32 @@ void compile_code(Node * ast, int want_ptr)
          || strcmp(op_text, ">>") == 0
          || strcmp(op_text, "shl_unsafe") == 0
          || strcmp(op_text, "shr_unsafe") == 0
+         || strcmp(op_text, "&&") == 0
+         || strcmp(op_text, "||") == 0
+         || strcmp(op_text, "and") == 0
+         || strcmp(op_text, "or") == 0
         )
         {
             char c = op_text[0];
             if (c == 's' && op_text[2] == 'l') c = 'L';
             if (c == 's' && op_text[2] == 'r') c = 'R';
+            if (op_text[2] == '&') c = 'a';
+            if (op_text[2] == '|') c = 'o';
             compile_infix_basic(expr_1, expr_2, op_text[0]);
+        }
+        else if (strcmp(op_text, "==") == 0
+              || strcmp(op_text, "!=") == 0
+              || strcmp(op_text, ">=") == 0
+              || strcmp(op_text, "<=") == 0
+              || strcmp(op_text, ">") == 0
+              || strcmp(op_text, "<") == 0
+        )
+        {
+            assert(("TODO: equality ops", 0));
         }
         else
         {
-            puts("TODO other infix ops");
-            assert(0);
+            assert(("TODO: other infix ops", 0));
         }
     } break;
     default:
