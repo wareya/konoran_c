@@ -616,18 +616,23 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
 {
     if (left->val->type->variant == TYPE_POINTER)
     {
-        assert(right->val->type->primitive_type == PRIM_U64);
-        
-        _push_small_if_const(right->val);
-        emit_pop_safe(RDX);
-        _push_small_if_const(left->val);
-        emit_pop_safe(RAX);
-        
-        left->val->kind = VAL_STACK_TOP;
-        
-        emit_add(RAX, RDX, 8);
-        emit_push_safe(RAX);
-        return;
+        if (op == '+')
+        {
+            assert(right->val->type->primitive_type == PRIM_U64);
+            
+            _push_small_if_const(right->val);
+            emit_pop_safe(RDX);
+            _push_small_if_const(left->val);
+            emit_pop_safe(RAX);
+            
+            left->val->kind = VAL_STACK_TOP;
+            
+            emit_add(RAX, RDX, 8);
+            emit_push_safe(RAX);
+            return;
+        }
+        else
+            assert(("unsupported infix op for pointers", 0));
     }
     // shr_unsafe, shl_unsafe, <<, >>
     if (op == 'R' || op == 'L' || op == '<' || op == '>')
@@ -939,7 +944,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             left->val->type = get_type("u8");
         }
         else
-            assert(("other ops not implemented yet!", 0));
+            assert(("internal error: unknown integer infix op!", 0));
     }
     else if (type_is_float(left->val->type))
     {
@@ -968,9 +973,9 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             emit_float_div(XMM0, XMM1, size);
             emit_xmm_push_safe(XMM0, size);
         }
-        else
-            assert(("other float ops not implemented yet!", 0));
-        
+        else if (op == '%')
+        {
+            // approximated as x - y * trunc(x/y)
 /*
 // need these for remainder
 
@@ -1012,7 +1017,10 @@ c:  81 c1 00 00 20 80       add    ecx,0x80200000
 3d: 48 21 d0                and    rax,rdx
 40: 66 48 0f 6e c0          movq   xmm0,rax
 */
-        
+            assert(("float remainder not implemented yet!", 0));
+        }
+        else
+            assert(("operation not supported on floats", 0));
     }
     
     Value * value = new_value(left->val->type);
@@ -1244,20 +1252,6 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
                 emit_cset(RCX, J_NE);
                 emit_or(RAX, RCX, 1);
             }
-            /*
-            emit_cset(RAX, J_PAR);
-            emit_cset(RCX, J_NE);
-            emit_or(RAX, RCX, 1);
-            if (op == '=')
-                emit_cset(RAX, J_EQ)
-            else
-                emit_cset(RAX, J_NE)
-            */
-            /*
-            emit_cset(RAX, J_NPA);
-            emit_cset(RCX, J_EQ);
-            emit_and(RAX, RCX, 1);
-            */
         }
         else if (op == '>')
         {
@@ -1280,7 +1274,7 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
             emit_cset(RAX, J_UGE);
         }
         else
-            assert(("float equality ops not implemented yet!", 0));
+            assert(("internal error: broken float comparison op", 0));
         
         emit_push_safe(RAX);
     }
@@ -1321,23 +1315,41 @@ void compile_unary_minus(StackItem * val)
     }
     else if (val->val->type->primitive_type == PRIM_F32)
     {
-        emit_xmm_pop_safe(XMM0, 8);
-        emit_xor(RAX, RAX, 8);
+        emit_xmm_pop_safe(XMM0, 4);
+        emit_xor(RAX, RAX, 4);
         emit_bts(RAX, 31);
-        emit_mov_xmm_from_base(XMM1, RAX, 8);
+        emit_mov_xmm_from_base(XMM1, RAX, 4);
         emit_xorps(XMM0, XMM1);
-        emit_xmm_push_safe(XMM0, 8);
+        emit_xmm_push_safe(XMM0, 4);
     }
     else // PRIM_F64
     {
         emit_xmm_pop_safe(XMM0, 8);
-        emit_xor(RAX, RAX, 8);
+        emit_xor(RAX, RAX, 4);
         emit_bts(RAX, 63);
         emit_mov_xmm_from_base(XMM1, RAX, 8);
         emit_xorps(XMM0, XMM1);
         emit_xmm_push_safe(XMM0, 8);
     }
     stack_push(val);
+}
+void compile_unary_not(StackItem * val)
+{
+    if (val->val->type->variant == TYPE_PRIMITIVE)
+    {
+        assert(val->val->type->primitive_type >= PRIM_U8);
+        assert(val->val->type->primitive_type <= PRIM_I64);
+        
+        emit_pop_safe(RAX);
+        emit_test(RAX, RAX, val->val->type->size);
+        emit_cset(RAX, J_EQ);
+        emit_push_safe(RAX);
+        
+        val->val->type = get_type("u8");
+        stack_push(val);
+    }
+    else
+        assert(("FIXME TODO ! op for pointers", 0));
 }
 
 Type * return_type = 0;
@@ -1455,14 +1467,15 @@ void compile_code(Node * ast, int want_ptr)
         if (ast->type == FULLDECLARATION)
         {
             assert(stack_offset == 0);
-            // destination location into RAX
-            emit_lea(RAX, RBP, -var->val->loc);
             
             compile_code(nth_child(ast, 2), 0);
             Value * expr = stack_pop()->val;
             
             _push_small_if_const(expr);
             emit_pop_safe(RDX); // value into RDX
+            
+            // destination location into RAX
+            emit_lea(RAX, RBP, -var->val->loc);
             
             emit_mov_preg_reg(RAX, RDX, expr->type->size);
             
@@ -1511,6 +1524,7 @@ void compile_code(Node * ast, int want_ptr)
         }
         else if (type_is_int(expr_type) && type_is_int(type))
         {
+            // FIXME support constexpr casts
             _push_small_if_const(expr);
             
             // size downcast. do nothing.
@@ -1540,6 +1554,7 @@ void compile_code(Node * ast, int want_ptr)
         // cast from float to int
         else if (type_is_float(expr_type) && type_is_int(type))
         {
+            // FIXME support constexpr casts
             _push_small_if_const(expr);
             
             // Checks for the least extreme possible value in the given float format that can be clamped on.
@@ -1649,6 +1664,7 @@ void compile_code(Node * ast, int want_ptr)
         }
         else if (type_is_float(expr_type) && type_is_float(type))
         {
+            // FIXME support constexpr casts
             _push_small_if_const(expr);
             
             assert(expr_type->size != type->size);
@@ -1663,6 +1679,7 @@ void compile_code(Node * ast, int want_ptr)
         }
         else if (type_is_int(expr_type) && type_is_float(type))
         {
+            // FIXME support constexpr casts
             _push_small_if_const(expr);
             
             emit_pop_safe(RAX);
@@ -1830,6 +1847,7 @@ void compile_code(Node * ast, int want_ptr)
             puts("compiled unary child!");
             
             StackItem * val = stack_pop();
+            // FIXME fully support constexpr
             _push_small_if_const(val->val);
             val->val->kind = VAL_STACK_TOP;
             
@@ -1869,10 +1887,9 @@ void compile_code(Node * ast, int want_ptr)
                 }
             }
             else if (strcmp(op_text, "-") == 0)
-            {
-                puts("compiling unary...");
                 compile_unary_minus(val);
-            }
+            else if (strcmp(op_text, "!") == 0)
+                compile_unary_not(val);
             else
             {
                 puts("TODO other unary ops");
@@ -2034,6 +2051,14 @@ typedef struct _Const {
 
 Const * consts = 0;
 
+Const * get_global_const(char * name, size_t name_len)
+{
+    Const * myconst = consts;
+    while (myconst && strncmp(myconst->name, name, name_len) != 0)
+        myconst = myconst->next;
+    return myconst;
+}
+
 Const * add_global_const(char * name, Type * type, uint64_t pos)
 {
     Const * last = consts;
@@ -2069,7 +2094,7 @@ void compile_globals_collect(Node * ast)
     {
     case CONSTEXPR_GLOBALFULLDECLARATION:
     {
-        Node * type = nth_child(ast, 0);
+        Type * type = parse_type(nth_child(ast, 0));
         Node * name = nth_child(ast, 1);
         char * name_text = strcpy_len(name->text, name->textlen);
         assert(name_text);
@@ -2092,10 +2117,11 @@ void compile_globals_collect(Node * ast)
             puts("TODO: large consts");
             assert(0);
         }
-        // FIXME: parse and verify type
+        
+        assert(types_same(type, val->val->type));
+        
         uint64_t loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
         add_global_const(name_text, val->val->type, loc);
-        
     } break;
     case GLOBALFULLDECLARATION:
     {
