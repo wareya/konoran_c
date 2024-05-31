@@ -766,9 +766,15 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             else if (op == '^')
                 value->_val = left->val->_val ^ right->val->_val;
             else if (op == 'a')
+            {
                 value->_val = (!!left->val->_val) && (!!right->val->_val);
+                value->type = get_type("u8");
+            }
             else if (op == 'o')
+            {
                 value->_val = (!!left->val->_val) || (!!right->val->_val);
+                value->type = get_type("u8");
+            }
             else
                 assert(("internal error: unknown infix integer op", 0));
             
@@ -929,6 +935,8 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             else
                 emit_or(RAX, RDX, 1);
             emit_push_safe(RAX);
+            
+            left->val->type = get_type("u8");
         }
         else
             assert(("other ops not implemented yet!", 0));
@@ -962,7 +970,10 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         }
         else
             assert(("other float ops not implemented yet!", 0));
+        
 /*
+// need these for remainder
+
 // trunc for f32
 0:  66 0f 7e c0             movd   eax,xmm0
 4:  89 c1                   mov    ecx,eax
@@ -1005,6 +1016,224 @@ c:  81 c1 00 00 20 80       add    ecx,0x80200000
     }
     
     Value * value = new_value(left->val->type);
+    value->kind = VAL_STACK_TOP;
+    stack_push_new(value);
+}
+
+void compile_infix_equality(StackItem * left, StackItem * right, char op)
+{
+    assert(types_same(left->val->type, right->val->type));
+    
+    size_t size = left->val->type->size;
+    uint8_t is_int = type_is_int(left->val->type);
+    uint8_t int_signed = type_is_signed(left->val->type);
+    uint8_t is_float = type_is_float(left->val->type);
+    
+    // constant folding
+    if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
+    {
+        Value * value = new_value(left->val->type);
+        value->kind = VAL_CONSTANT;
+        if (is_int)
+        {
+            uint64_t masks[] = {0, 0xFF, 0xFFFF, 0, 0xFFFFFFFF, 0, 0, 0, 0xFFFFFFFFFFFFFFFF};
+            uint64_t size_mask = masks[size];
+            
+            left->val->_val &= size_mask;
+            right->val->_val &= size_mask;
+            
+            int8_t  l1 = (int8_t)left->val->_val;
+            int16_t l2 = (int16_t)left->val->_val;
+            int32_t l4 = (int32_t)left->val->_val;
+            int64_t l8 = (int64_t)left->val->_val;
+            
+            int8_t  r1 = (int8_t)right->val->_val;
+            int16_t r2 = (int16_t)right->val->_val;
+            int32_t r4 = (int32_t)right->val->_val;
+            int64_t r8 = (int64_t)right->val->_val;
+            
+            if (op == '=')
+                value->_val = left->val->_val == right->val->_val;
+            else if (op == '!')
+                value->_val = left->val->_val != right->val->_val;
+            else if (op == '>')
+            {
+                if (int_signed)
+                {
+                    if (size == 1)      value->_val = l1 > r1;
+                    else if (size == 2) value->_val = l2 > r2;
+                    else if (size == 4) value->_val = l4 > r4;
+                    else if (size == 8) value->_val = l8 > r8;
+                    else assert(0);
+                }
+                else
+                    value->_val = left->val->_val > right->val->_val;
+            }
+            else if (op == '<')
+            {
+                if (int_signed)
+                {
+                    if (size == 1)      value->_val = l1 < r1;
+                    else if (size == 2) value->_val = l2 < r2;
+                    else if (size == 4) value->_val = l4 < r4;
+                    else if (size == 8) value->_val = l8 < r8;
+                    else assert(0);
+                }
+                else
+                    value->_val = left->val->_val < right->val->_val;
+            }
+            else if (op == 'G')
+            {
+                if (int_signed)
+                {
+                    if (size == 1)      value->_val = l1 >= r1;
+                    else if (size == 2) value->_val = l2 >= r2;
+                    else if (size == 4) value->_val = l4 >= r4;
+                    else if (size == 8) value->_val = l8 >= r8;
+                    else assert(0);
+                }
+                else
+                    value->_val = left->val->_val >= right->val->_val;
+            }
+            else if (op == 'L')
+            {
+                if (int_signed)
+                {
+                    if (size == 1)      value->_val = l1 <= r1;
+                    else if (size == 2) value->_val = l2 <= r2;
+                    else if (size == 4) value->_val = l4 <= r4;
+                    else if (size == 8) value->_val = l8 <= r8;
+                    else assert(0);
+                }
+                else
+                    value->_val = left->val->_val <= right->val->_val;
+            }
+            else
+                assert(("internal error: unknown infix integer op", 0));
+            
+            value->_val &= 0xFF;
+            value->type = get_type("u8");
+        }
+        else if (is_float)
+        {
+            uint8_t out = 0;
+            
+            if (size == 8)
+            {
+                double left_, right_;
+                memcpy(&left_, &left->val->_val, 8);
+                memcpy(&right_, &right->val->_val, 8);
+                
+                if (op == '=')
+                    out = left_ == right_;
+                else if (op == '!')
+                    out = left_ != right_;
+                else if (op == '>')
+                    out = left_ > right_;
+                else if (op == '<')
+                    out = left_ < right_;
+                else if (op == 'G')
+                    out = left_ >= right_;
+                else if (op == 'L')
+                    out = left_ <= right_;
+                else
+                    assert(("operation not supported on f64s", 0));
+            }
+            else if (size == 4)
+            {
+                float left_, right_;
+                memcpy(&left_, &left->val->_val, 4);
+                memcpy(&right_, &right->val->_val, 4);
+                float out = 0.0;
+                
+                if (op == '=')
+                    out = left_ == right_;
+                else if (op == '!')
+                    out = left_ != right_;
+                else if (op == '>')
+                    out = left_ > right_;
+                else if (op == '<')
+                    out = left_ < right_;
+                else if (op == 'G')
+                    out = left_ >= right_;
+                else if (op == 'L')
+                    out = left_ <= right_;
+                else
+                    assert(("operation not supported on f32s", 0));
+            }
+            else
+                assert(("Internal error: broken float type", 0));
+            
+            value->_val = out;
+            value->type = get_type("u8");
+        }
+        else
+        {
+            assert(("Unsupported type set for constexpr infix operations", 0));
+        }
+        stack_push_new(value);
+        return;
+    }
+    assert(left->val->kind == VAL_STACK_TOP || left->val->kind == VAL_CONSTANT);
+    assert(right->val->kind == VAL_STACK_TOP || right->val->kind == VAL_CONSTANT);
+    
+    if (is_int)
+    {
+        _push_small_if_const(right->val);
+        emit_pop_safe(RDX);
+        _push_small_if_const(left->val);
+        emit_pop_safe(RAX);
+        
+        emit_cmp(RAX, RDX, size);
+        
+        if (type_is_signed(left->val->type))
+        {
+            if (op == '=')
+                emit_cset(RAX, J_EQ);
+            else if (op == '!')
+                emit_cset(RAX, J_NE);
+            else if (op == '>')
+                emit_cset(RAX, J_SGT);
+            else if (op == '<')
+                emit_cset(RAX, J_SLT);
+            else if (op == 'G')
+                emit_cset(RAX, J_SGE);
+            else if (op == 'L')
+                emit_cset(RAX, J_SLE);
+            else
+                assert(("other ops not implemented yet!", 0));
+        }
+        else
+        {
+            if (op == '=')
+                emit_cset(RAX, J_EQ);
+            else if (op == '!')
+                emit_cset(RAX, J_NE);
+            else if (op == '>')
+                emit_cset(RAX, J_UGT);
+            else if (op == '<')
+                emit_cset(RAX, J_ULT);
+            else if (op == 'G')
+                emit_cset(RAX, J_UGE);
+            else if (op == 'L')
+                emit_cset(RAX, J_ULE);
+            else
+                assert(("other ops not implemented yet!", 0));
+        }
+        
+        emit_push_safe(RAX);
+    }
+    else if (type_is_float(left->val->type))
+    {
+        _push_small_if_const(right->val);
+        emit_xmm_pop_safe(XMM1, size);
+        _push_small_if_const(left->val);
+        emit_xmm_pop_safe(XMM0, size);
+        
+        assert(("float equality ops not implemented yet!", 0));
+    }
+    
+    Value * value = new_value(get_type("u8"));
     value->kind = VAL_STACK_TOP;
     stack_push_new(value);
 }
@@ -1101,6 +1330,7 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case RVAR_NAME:
     {
+        printf("in RVAR_NAME!! want pointer... %d codelen %llX...\n", want_ptr, code->len);
         Variable * var = get_local(ast);
         assert(var);
         
@@ -1114,9 +1344,13 @@ void compile_code(Node * ast, int want_ptr)
         {
             type = make_ptr_type(type);
             emit_lea(RAX, RBP, -var->val->loc);
+            puts("emitting LEA...");
         }
         else
+        {
             emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
+            printf("emitting mov with offset of %lld...\n", -var->val->loc);
+        }
         emit_push_safe(RAX);
         
         Value * value = new_value(type);
@@ -1130,6 +1364,7 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case LVAR_NAME:
     {
+        puts("in LVAR_NAME!!");
         assert(want_ptr == WANT_PTR_VIRTUAL);
         Variable * var = get_local(ast);
         assert(var);
@@ -1600,10 +1835,12 @@ void compile_code(Node * ast, int want_ptr)
     case BINEXPR_4:
     case BINEXPR_5:
     {
+        puts("in BINEXPR!!! compiling children...");
         compile_code(nth_child(ast, 0), 0);
         Node * op = nth_child(ast, 1);
         char * op_text = strcpy_len(op->text, op->textlen);
         compile_code(nth_child(ast, 2), 0);
+        puts("compiled!!! now compiling BINEXPR...");
         StackItem * expr_2 = stack_pop();
         StackItem * expr_1 = stack_pop();
         if (strcmp(op_text, "+") == 0
@@ -1631,7 +1868,7 @@ void compile_code(Node * ast, int want_ptr)
             if (c == 's' && op_text[2] == 'r') c = 'R';
             if (op_text[2] == '&') c = 'a';
             if (op_text[2] == '|') c = 'o';
-            compile_infix_basic(expr_1, expr_2, op_text[0]);
+            compile_infix_basic(expr_1, expr_2, c);
         }
         else if (strcmp(op_text, "==") == 0
               || strcmp(op_text, "!=") == 0
@@ -1641,7 +1878,10 @@ void compile_code(Node * ast, int want_ptr)
               || strcmp(op_text, "<") == 0
         )
         {
-            assert(("TODO: equality ops", 0));
+            char c = op_text[0];
+            if (strcmp(op_text, ">=") == 0) c = 'G';
+            if (strcmp(op_text, "<=") == 0) c = 'L';
+            compile_infix_equality(expr_1, expr_2, c);
         }
         else
         {
