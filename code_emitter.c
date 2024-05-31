@@ -139,13 +139,21 @@ void do_fix_jumps(void)
 
 // condition codes for emit_jmp_cond_short
 enum {
-    J_EQ = 0x4,
-    J_NE = 0x5,
+    // weird
+    J_OVF = 0x0, // overflow == 1
+    J_NOV = 0x1, // overflow == 0
+    J_SGN = 0x8, // sign == 1
+    J_NSG = 0x9, // sign == 0
+    J_PAR = 0xA, // parity == 1 (parity even or float NNN)
+    J_NPA = 0xB, // parity == 0 (parity odd or float not NaN)
+    
+    J_EQ = 0x4,  // equal     (zero flag == 1)
+    J_NE = 0x5,  // not equal (zero flag == 0)
     // for unsigned
-    J_ULE = 0x6, // BE
-    J_UGT = 0x7, // A
-    J_ULT = 0x2, // B
-    J_UGE = 0x3, // AE
+    J_ULT = 0x2, // B  (aka LT)
+    J_UGE = 0x3, // AE (aka GE)
+    J_ULE = 0x6, // BE (aka LE)
+    J_UGT = 0x7, // A  (aka GT)
     // for signed:
     J_SLT = 0xC, // LT
     J_SGE = 0xD, // GE

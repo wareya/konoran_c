@@ -1144,7 +1144,6 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
                 float left_, right_;
                 memcpy(&left_, &left->val->_val, 4);
                 memcpy(&right_, &right->val->_val, 4);
-                float out = 0.0;
                 
                 if (op == '=')
                     out = left_ == right_;
@@ -1230,7 +1229,60 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
         _push_small_if_const(left->val);
         emit_xmm_pop_safe(XMM0, size);
         
-        assert(("float equality ops not implemented yet!", 0));
+        if (op == '=' || op == '!')
+        {
+            emit_compare_float(XMM0, XMM1, size);
+            if (op == '=')
+            {
+                emit_cset(RAX, J_NPA);
+                emit_cset(RCX, J_EQ);
+                emit_and(RAX, RCX, 1);
+            }
+            else
+            {
+                emit_cset(RAX, J_PAR);
+                emit_cset(RCX, J_NE);
+                emit_or(RAX, RCX, 1);
+            }
+            /*
+            emit_cset(RAX, J_PAR);
+            emit_cset(RCX, J_NE);
+            emit_or(RAX, RCX, 1);
+            if (op == '=')
+                emit_cset(RAX, J_EQ)
+            else
+                emit_cset(RAX, J_NE)
+            */
+            /*
+            emit_cset(RAX, J_NPA);
+            emit_cset(RCX, J_EQ);
+            emit_and(RAX, RCX, 1);
+            */
+        }
+        else if (op == '>')
+        {
+            emit_compare_float(XMM0, XMM1, size);
+            emit_cset(RAX, J_UGT);
+        }
+        else if (op == '<')
+        {
+            emit_compare_float(XMM1, XMM0, size);
+            emit_cset(RAX, J_UGT);
+        }
+        else if (op == 'G')
+        {
+            emit_compare_float(XMM0, XMM1, size);
+            emit_cset(RAX, J_UGE);
+        }
+        else if (op == 'L')
+        {
+            emit_compare_float(XMM1, XMM0, size);
+            emit_cset(RAX, J_UGE);
+        }
+        else
+            assert(("float equality ops not implemented yet!", 0));
+        
+        emit_push_safe(RAX);
     }
     
     Value * value = new_value(get_type("u8"));
