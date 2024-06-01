@@ -15,7 +15,7 @@ i64 main(i32 asdf2asdf)
     */
     //myglobal = 15152u32;
     //myglobal = 0u32;
-    u8 asdf = !myglobal2;
+    u8 asdf = !asdf2asdf;
     //return ((asdf) as i8) as i64;
     return ((asdf) as i8) as i64;
     

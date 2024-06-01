@@ -604,6 +604,7 @@ void emit_compare_float(int reg_d, int reg_s, size_t size)
 // f3 0f 2c c7             cvttss2si eax,xmm7
 // f3 0f 2c ff             cvttss2si edi,xmm7
 // f3 44 0f 2c c7          cvttss2si r8d,xmm7
+
 void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
 {
     last_is_terminator = 0;
@@ -977,42 +978,10 @@ void emit_mov(int reg_d, int reg_s, size_t size)
 void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 {
     emit_mov_offsetlike(reg_s, preg_d, 0, size, 0x88, 0x89);
-    /*
-    last_is_terminator = 0;
-    
-// 48 89 02                mov    QWORD PTR [rdx],rax
-// 48 89 10                mov    QWORD PTR [rax],rdx
-// 89 02                   mov    DWORD PTR [rdx],eax
-// 89 10                   mov    DWORD PTR [rax],edx
-// 66 89 02                mov    WORD PTR [rdx],ax
-// 66 89 10                mov    WORD PTR [rax],dx
-// 88 02                   mov    BYTE PTR [rdx],al
-// 88 10                   mov    BYTE PTR [rax],dl
-    
-    assert(preg_d == RAX || preg_d == RDX);
-    assert(reg_s == RAX || reg_s == RDX);
-    assert(preg_d != reg_s);
-    assert(size == 1 || size == 2 || size == 4 || size == 8);
-    if (size == 8)
-    {
-        byte_push(code, 0x48);
-        byte_push(code, 0x89);
-    }
-    else if (size == 4)
-        byte_push(code, 0x89);
-    else if (size == 2)
-    {
-        byte_push(code, 0x66);
-        byte_push(code, 0x89);
-    }
-    else
-        byte_push(code, 0x88);
-    
-    if (preg_d == RDX && reg_s == RAX)
-        byte_push(code, 0x02);
-    else if (preg_d == RAX && reg_s == RDX)
-        byte_push(code, 0x10);
-        */
+}
+void emit_mov_into_offset(int preg_d, int64_t offset, int reg_s, size_t size)
+{
+    emit_mov_offsetlike(reg_s, preg_d, offset, size, 0x88, 0x89);
 }
 // only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
 void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)

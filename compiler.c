@@ -2138,22 +2138,14 @@ void compile_defs_compile(Node * ast)
             assert(var->val->type->size <= 8);
             int64_t where = abi_get_next(type_is_float(var->val->type));
             if (where > 0)
-            {
-                emit_lea(RAX, RBP, -var->val->loc);
-                emit_mov_preg_reg(RAX, where, var->val->type->size);
-            }
+                emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
             else
             {
                 // FIXME: this is dumb
                 // sysv can use every single lower int register
                 // i need to add support for non-RAX/RDX registers to the mov emitters
-                emit_push(RDX);
-                
-                emit_mov_offset(RDX, RBP, -where, var->val->type->size);
-                emit_lea(RAX, RBP, -var->val->loc);
-                emit_mov_preg_reg(RAX, RDX, var->val->type->size);
-                
-                emit_pop(RDX);
+                emit_mov_offset(RAX, RBP, -where, var->val->type->size);
+                emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
             }
             
             arg_name = arg_name->next;

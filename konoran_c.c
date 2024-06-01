@@ -90,6 +90,7 @@ int main(int argc, char ** argv)
     
     jit_startup();
     asdf = jit_main(152);
+    //asdf = jit_main(0);
     
     printf("%lld\n", asdf);
     printf("%llu\n", asdf);
