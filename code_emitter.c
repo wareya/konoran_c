@@ -1179,82 +1179,10 @@ void emit_breakpoint(void)
     last_is_terminator = 0;
     byte_push(code, 0xCC);
 }
-void emit_lea(int reg1, int reg2, int64_t offset)
+void emit_lea(int reg_d, int reg_s, int64_t offset)
 {
-    last_is_terminator = 0;
-    assert(offset >= -2147483648 && offset <= 2147483647);
-    assert(reg1 == RAX || reg1 == RDX);
-    assert(reg2 == RBP || reg2 == RSP);
-    
-//  48 8d 04 24                lea    rax,[rsp]
-//  48 8d 44 24 50             lea    rax,[rsp+0x50]
-//  48 8d 84 24 20 03 00 00    lea    rax,[rsp+0x320]
-
-//  48 8d 14 24                lea    rdx,[rsp]
-//  48 8d 54 24 50             lea    rdx,[rsp+0x50]
-//  48 8d 94 24 20 03 00 00    lea    rdx,[rsp+0x320]
-
-//  48 8d 45 00                lea    rax,[rbp+0x0]
-//  48 8d 45 50                lea    rax,[rbp+0x50]
-//  48 8d 85 20 03 00 00       lea    rax,[rbp+0x320]
-
-//  48 8d 55 00                lea    rdx,[rbp+0x0]
-//  48 8d 55 50                lea    rdx,[rbp+0x50]
-//  48 8d 95 20 03 00 00       lea    rdx,[rbp+0x320]
-
-// not implementing:
-
-//  48 8d 34 24                lea    rsi,[rsp]
-//  48 8d 74 24 50             lea    rsi,[rsp+0x50]
-//  48 8d b4 24 20 03 00 00    lea    rsi,[rsp+0x320]
-
-//  48 8d 3c 24                lea    rdi,[rsp]
-//  48 8d 7c 24 50             lea    rdi,[rsp+0x50]
-//  48 8d bc 24 20 03 00 00    lea    rdi,[rsp+0x320]
-
-//  48 8d 75 00                lea    rsi,[rbp+0x0]
-//  48 8d 75 50                lea    rsi,[rbp+0x50]
-//  48 8d b5 20 03 00 00       lea    rsi,[rbp+0x320]
-
-//  48 8d 7d 00                lea    rdi,[rbp+0x0]
-//  48 8d 7d 50                lea    rdi,[rbp+0x50]
-//  48 8d bd 20 03 00 00       lea    rdi,[rbp+0x320] 
-    
-    byte_push(code, 0x48);
-    byte_push(code, 0x8D);
-    
-    if (reg2 == RSP)
-    {
-        // special encoding for some reason
-        if (offset == 0)
-        {
-            byte_push(code, reg1 == RAX ? 0x04 : 0x14);
-            byte_push(code, 0x24);
-        }
-        else if (offset >= -128 && offset <= 127)
-        {
-            byte_push(code, reg1 == RAX ? 0x44 : 0x54);
-            byte_push(code, 0x24);
-            byte_push(code, (uint8_t)offset);
-        }
-        else
-        {
-            byte_push(code, reg1 == RAX ? 0x84 : 0x94);
-            byte_push(code, 0x24);
-            bytes_push_int(code, (uint64_t)offset, 4);
-        }
-    }
-    else // reg2 == RBP
-    {
-        if (offset >= -128 && offset <= 127)
-        {
-            byte_push(code, reg1 == RAX ? 0x45 : 0x55);
-            byte_push(code, (uint8_t)offset);
-        }
-        else
-        {
-            byte_push(code, reg1 == RAX ? 0x85 : 0x95);
-            bytes_push_int(code, (uint64_t)offset, 4);
-        }
-    }
+    emit_mov_offsetlike(reg_d, reg_s, offset, 8,
+        0xFF, // invalid
+        0x8D // actual op
+    );
 }
