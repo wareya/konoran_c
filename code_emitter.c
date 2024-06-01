@@ -908,6 +908,45 @@ void emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
 
+void emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uint8_t byteop, uint8_t longop)
+{
+    last_is_terminator = 0;
+    assert(offset >= -2147483648 && offset <= 2147483647);
+    
+    uint8_t offset_flag = 0;
+    if (offset != 0)
+        offset_flag = 0x40;
+    if (offset < -128 || offset > 127)
+        offset_flag = 0x80;
+    
+    assert(size == 1 || size == 2 || size == 4 || size == 8);
+    
+    EMIT_LEN_PREFIX(reg_s, reg_d);
+    
+    byte_push(code, (size == 1) ? byteop : longop);
+    
+    reg_s &= 7;
+    reg_d &= 7;
+    
+    uint8_t reg_byte = reg_s | (reg_d << 3);
+    
+    if ((reg_byte & 7) == 5 && offset_flag == 0)
+        offset_flag = 0x40;
+    
+    byte_push(code, reg_byte | offset_flag);
+    
+    if ((reg_byte & 7) == 4)
+        byte_push(code, 0x24);
+    
+    if (offset_flag == 0x40)
+        bytes_push_int(code, offset, 1);
+    else if (offset_flag == 0x80)
+        bytes_push_int(code, offset, 4);
+}
+void emit_mov_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    emit_mov_offsetlike(reg_d, reg_s, offset, size, 0x8A, 0x8B);
+}
 void emit_mov(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
@@ -937,6 +976,8 @@ void emit_mov(int reg_d, int reg_s, size_t size)
 // only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
 void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 {
+    emit_mov_offsetlike(reg_s, preg_d, 0, size, 0x88, 0x89);
+    /*
     last_is_terminator = 0;
     
 // 48 89 02                mov    QWORD PTR [rdx],rax
@@ -971,44 +1012,12 @@ void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
         byte_push(code, 0x02);
     else if (preg_d == RAX && reg_s == RDX)
         byte_push(code, 0x10);
+        */
 }
 // only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
 void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
 {
-    last_is_terminator = 0;
-    
-// 48 8b 02                mov    rax,QWORD PTR [rdx]
-// 48 8b 10                mov    rdx,QWORD PTR [rax]
-// 8b 02                   mov    eax,DWORD PTR [rdx]
-// 8b 10                   mov    edx,DWORD PTR [rax]
-// 66 8b 02                mov    ax,WORD PTR [rdx]
-// 66 8b 10                mov    dx,WORD PTR [rax]
-// 8a 02                   mov    al,BYTE PTR [rdx]
-// 8a 10                   mov    dl,BYTE PTR [rax]
-    
-    assert(preg_s == RAX || preg_s == RDX);
-    assert(reg_d == RAX || reg_d == RDX);
-    assert(preg_s != reg_d);
-    assert(size == 1 || size == 2 || size == 4 || size == 8);
-    if (size == 8)
-    {
-        byte_push(code, 0x48);
-        byte_push(code, 0x8b);
-    }
-    else if (size == 4)
-        byte_push(code, 0x8b);
-    else if (size == 2)
-    {
-        byte_push(code, 0x66);
-        byte_push(code, 0x8b);
-    }
-    else
-        byte_push(code, 0x8a);
-    
-    if (reg_d == RAX && preg_s == RDX)
-        byte_push(code, 0x02);
-    else if (reg_d == RDX && preg_s == RAX)
-        byte_push(code, 0x10);
+    emit_mov_offset(reg_d, preg_s, 0, size);
 }
 
 void emit_push(int reg)
@@ -1142,18 +1151,6 @@ void emit_push_val(int64_t val)
 {
     last_is_terminator = 0;
     
-// 6a 00                            push   0x0
-// 6a 7f                            push   0x7f
-// 68 80 00 00 00                   push   0x80
-// 6a 80                            push   0xffffffffffffff80
-// 68 0d 3e 8b 00                   push   0x8b3e0d
-    
-// 48 b8 00 00 00 00 01 00 00 00    movabs rax,0x100000000
-// 50                               push   rax
-    
-// 48 b8 00 00 00 00 ff ff ff ff    movabs rax,0xffffffff00000000
-// 50                               push   rax
-    
     if (val >= -128 && val <= 127)
     {
         byte_push(code, 0x6A);
@@ -1169,7 +1166,7 @@ void emit_push_val(int64_t val)
         // push ... (subtracts 8 from rsp)
         byte_push(code, 0x68);
         bytes_push_int(code, (uint64_t)val, 4);
-        // mov dword ptr [rsp+4], ...
+        // mov dword ptr [rsp+4], imm32
         byte_push(code, 0xC7);
         byte_push(code, 0x44);
         byte_push(code, 0x24);
@@ -1181,77 +1178,6 @@ void emit_breakpoint(void)
 {
     last_is_terminator = 0;
     byte_push(code, 0xCC);
-}
-void emit_mov_offset(int reg1, int reg2, int64_t offset, size_t size)
-{
-    last_is_terminator = 0;
-    assert(offset >= -2147483648 && offset <= 2147483647);
-    assert(reg1 == RAX || reg1 == RDX);
-    assert(reg2 == RBP || reg2 == RSP);
-    assert(size == 1 || size == 2 || size == 4 || size == 8);
-
-//  48 8b 04 24                mov    rax,QWORD PTR [rsp]
-//  48 8b 44 24 50             mov    rax,QWORD PTR [rsp+0x50]
-//  48 8b 84 24 20 03 00 00    mov    rax,QWORD PTR [rsp+0x320]
-
-//  48 8b 14 24                mov    rdx,QWORD PTR [rsp]
-//  48 8b 54 24 50             mov    rdx,QWORD PTR [rsp+0x50]
-//  48 8b 94 24 20 03 00 00    mov    rdx,QWORD PTR [rsp+0x320]
-
-//  48 8b 04 24                mov    rax,QWORD PTR [rsp+0x0]
-//  48 8b 45 00                mov    rax,QWORD PTR [rbp+0x0]
-//  48 8b 44 24 50             mov    rax,QWORD PTR [rsp+0x50]
-//  48 8b 45 50                mov    rax,QWORD PTR [rbp+0x50]
-//  48 8b 85 20 03 00 00       mov    rax,QWORD PTR [rbp+0x320]
-
-//  48 8b 55 00                mov    rdx,QWORD PTR [rbp+0x0]
-//  48 8b 55 50                mov    rdx,QWORD PTR [rbp+0x50]
-//  48 8b 95 20 03 00 00       mov    rdx,QWORD PTR [rbp+0x320]
-    
-    if (size == 8)
-        byte_push(code, 0x48);
-    else if (size == 2)
-        byte_push(code, 0x66);
-    
-    if (size == 1)
-        byte_push(code, 0x8A);
-    else
-        byte_push(code, 0x8B);
-    
-    if (reg2 == RSP)
-    {
-        // special encoding for some reason
-        if (offset == 0)
-        {
-            byte_push(code, reg1 == RAX ? 0x04 : 0x14);
-            byte_push(code, 0x24);
-        }
-        else if (offset >= -128 && offset <= 127)
-        {
-            byte_push(code, reg1 == RAX ? 0x44 : 0x54);
-            byte_push(code, 0x24);
-            byte_push(code, (uint8_t)offset);
-        }
-        else
-        {
-            byte_push(code, reg1 == RAX ? 0x84 : 0x94);
-            byte_push(code, 0x24);
-            bytes_push_int(code, (uint64_t)offset, 4);
-        }
-    }
-    else // reg2 == RBP
-    {
-        if (offset >= -128 && offset <= 127)
-        {
-            byte_push(code, reg1 == RAX ? 0x45 : 0x55);
-            byte_push(code, (uint8_t)offset);
-        }
-        else
-        {
-            byte_push(code, reg1 == RAX ? 0x85 : 0x95);
-            bytes_push_int(code, (uint64_t)offset, 4);
-        }
-    }
 }
 void emit_lea(int reg1, int reg2, int64_t offset)
 {

@@ -10,26 +10,23 @@ byte_buffer * global_data = 0;
 
 #include "code_emitter.c"
 
-enum {
-    ABI_WIN,
-    ABI_SYSV,
-};
-
-uint8_t abi = ABI_WIN;
-
-// Windows:
-// xmm0/rcx    xmm1/rdx    xmm2/r8    xmm3/r9    stack(rtl, top = leftmost)
-
-// SystemV:
-// RDI, RSI, RDX, RCX, R8, R9 (nonfloat)
-// xmm0~7 (float)
-// stack(rtl, top = leftmost)
-// horrifyingly, the stack is non-monotonic!!! an arg can go to stack, then the next arg to reg, then the next arg to stack!!!
-
+#include "abi_handler.h"
 
 #ifndef zalloc
 #define zalloc(X) (calloc(1, (X)))
 #endif
+
+// strncmp but checks len of left string
+int strcmp_len(const char * a, const char * b, size_t len)
+{
+    int order = strncmp(a, b, len);
+    if (order)
+        return order;
+    size_t a_len = strlen(a);
+    if (a_len > len)
+        return 1;
+    return 0;
+}
 
 size_t guess_alignment_from_size(size_t size)
 {
@@ -245,7 +242,7 @@ Type * get_type_from_ast(Node * node)
     if (!node)
         return 0;
     Type * last = type_list;
-    while (last && strncmp(last->name, node->text, node->textlen) != 0)
+    while (last && strcmp_len(last->name, node->text, node->textlen) != 0)
         last = last->next_type;
     return last;
 }
@@ -327,7 +324,7 @@ Variable * global_vars = 0;
 Variable * get_global(char * name, size_t name_len)
 {
     Variable * var = global_vars;
-    while (var && strncmp(var->name, name, name_len) != 0)
+    while (var && strcmp_len(var->name, name, name_len) != 0)
         var = var->next_var;
     return var;
 }
@@ -453,7 +450,7 @@ GenericList * visible_funcs = 0;
 VisibleFunc * find_visible_function(char * name)
 {
     GenericList * last = visible_funcs;
-    while (last && strncmp(((VisibleFunc *)(last->item))->funcdef->name, name, strlen(name)) != 0)
+    while (last && strcmp_len(((VisibleFunc *)(last->item))->funcdef->name, name, strlen(name)) != 0)
         last = last->next;
     return last->item;
 }
@@ -540,9 +537,6 @@ void compile_defs_collect(Node * ast)
         funcdef->signature = signature;
         funcdef->num_args = num_args;
         funcdef->vismod = vismod_text;
-        
-        //Node * statements = nth_child(ast, 4);
-        //assert(statements);
     } break;
     case STRUCTDEF:
     {
@@ -592,11 +586,15 @@ Variable * add_local(char * name, Type * type)
     return local;
 }
 
-Variable * get_local(Node * node)
+Variable * get_local(char * name, size_t name_len)
 {
     Variable * var = local_vars;
-    while (var && strncmp(var->name, node->text, node->textlen) != 0)
+    while (var && strcmp_len(var->name, name, name_len) != 0)
+    {
+        char * text = strcpy_len(name, name_len);
+        printf("comparing %s to %s...\n", var->name, text);
         var = var->next_var;
+    }
     return var;
 }
 
@@ -1471,7 +1469,7 @@ void compile_code(Node * ast, int want_ptr)
     {
         printf("in RVAR_NAME!! want pointer... %d codelen %llX...\n", want_ptr, code->len);
         Variable * var = 0;
-        if ((var = get_local(ast)))
+        if ((var = get_local(ast->text, ast->textlen)))
         {
             Type * type = var->val->type;
             
@@ -1519,7 +1517,11 @@ void compile_code(Node * ast, int want_ptr)
             stack_push_new(value);
         }
         else
+        {
+            char * text = strcpy_len(ast->text, ast->textlen);
+            printf("culprit: %s\n", text);
             assert(("unknown rvar (function name? TODO/FIXME)", 0));
+        }
     } break;
     case LVAR:
     {
@@ -1529,7 +1531,7 @@ void compile_code(Node * ast, int want_ptr)
     {
         assert(want_ptr == WANT_PTR_VIRTUAL);
         Variable * var = 0;
-        if ((var = get_local(ast)))
+        if ((var = get_local(ast->text, ast->textlen)))
         {
             if (var->val->kind == VAL_STACK_BOTTOM)
             {
@@ -1565,7 +1567,9 @@ void compile_code(Node * ast, int want_ptr)
         assert(stack_offset == 0);
         
         Type * type = parse_type(nth_child(ast, 0));
-        char * name = nth_child(ast, 1)->text;
+        Node * name = nth_child(ast, 1);
+        char * name_text = strcpy_len(name->text, name->textlen);
+        printf("declaring local %s...\n", name_text);
         
         size_t align = guess_alignment_from_size(type->size);
         uint64_t old_loc = stack_loc;
@@ -1575,7 +1579,7 @@ void compile_code(Node * ast, int want_ptr)
         
         emit_sub_imm(RSP, stack_loc - old_loc);
         
-        Variable * var = add_local(name, type);
+        Variable * var = add_local(name_text, type);
         var->val->kind = VAL_STACK_BOTTOM;
         var->val->loc = stack_loc;
         
@@ -2097,6 +2101,7 @@ void compile_defs_compile(Node * ast)
         return_type = funcdef->signature->item;
         GenericList * arg = funcdef->signature->next;
         GenericList * arg_name = funcdef->arg_names;
+        
         while (arg)
         {
             Type * type = arg->item;
@@ -2112,10 +2117,48 @@ void compile_defs_compile(Node * ast)
             arg_name = arg_name->next;
             arg = arg->next;
         }
+        // FIXME check if return type is a large struct, because they're returned by memsetting into pointers
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         emit_sub_imm(RSP, stack_loc);
+        
+        // emit code to assign arguments into local stack slots
+        abi_reset_state();
+        arg = funcdef->signature->next;
+        arg_name = funcdef->arg_names;
+        while (arg)
+        {
+            Type * type = arg->item;
+            char * argname = arg_name->item;
+            Variable * var = get_local(argname, strlen(argname));
+            
+            // FIXME large aggregates (as pointers)
+            // FIXME 2: small aggregates that consist entirely of floats
+            assert(var->val->type->size <= 8);
+            int64_t where = abi_get_next(type_is_float(var->val->type));
+            if (where > 0)
+            {
+                emit_lea(RAX, RBP, -var->val->loc);
+                emit_mov_preg_reg(RAX, where, var->val->type->size);
+            }
+            else
+            {
+                // FIXME: this is dumb
+                // sysv can use every single lower int register
+                // i need to add support for non-RAX/RDX registers to the mov emitters
+                emit_push(RDX);
+                
+                emit_mov_offset(RDX, RBP, -where, var->val->type->size);
+                emit_lea(RAX, RBP, -var->val->loc);
+                emit_mov_preg_reg(RAX, RDX, var->val->type->size);
+                
+                emit_pop(RDX);
+            }
+            
+            arg_name = arg_name->next;
+            arg = arg->next;
+        }
         
         Node * statement = nth_child(ast, 4)->first_child;
         assert(statement);
@@ -2266,6 +2309,8 @@ void compile(Node * ast)
         emit_add_imm(RSP, stack_loc);
         emit_pop(RBP);
         emit_ret();
+        
+        do_fix_jumps();
         
         // compile individual function definitions
         next = ast->first_child;
