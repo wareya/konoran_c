@@ -2184,7 +2184,12 @@ void compile_globals_collect(Node * ast)
             }
             else
             {
-                assert(("FIXME: const-initialized mutable global init", 0));
+                // large/aggregate
+                if (val->val->loc)
+                    memcpy((void *)var->val->loc, (void *)val->val->loc, val->val->type->size);
+                // small/primitive
+                else
+                    memcpy((void *)var->val->loc, &(val->val->_val), val->val->type->size);
             }
         }
     } break;

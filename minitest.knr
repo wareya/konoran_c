@@ -1,4 +1,5 @@
-i32 myglobal;// = 69i32 + 5i32;
+//i32 myglobal = 69i32 + 5i32;
+i32 myglobal = 0i32;
 
 i64 main()//i32 asdf2asdf)
 {
@@ -12,7 +13,7 @@ i64 main()//i32 asdf2asdf)
     return ((a == 1u8) as i8) as i64;
     */
     //myglobal = 15152u32;
-    myglobal = 0u32;
+    //myglobal = 0u32;
     u8 asdf = !myglobal;
     return ((asdf) as i8) as i64;
     
