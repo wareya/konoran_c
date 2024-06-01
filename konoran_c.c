@@ -71,6 +71,12 @@ int main(int argc, char ** argv)
     
     uint8_t * jit_code = copy_as_executable(code->data, code->len);
     
+    VisibleFunc * funcinfo_startup = find_visible_function("");
+    VisibleFunc * funcinfo_main = find_visible_function("main");
+    
+    assert(funcinfo_startup);
+    assert(funcinfo_main);
+    
     int64_t asdf = 91543;
     printf("%lld\n", asdf);
     printf("%llu\n", asdf);
@@ -78,10 +84,12 @@ int main(int argc, char ** argv)
 // suppress wrong/non-posix GCC warning
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-    int64_t (* jit_func) (int) = (int64_t(*)(int))(void *)jit_code;
+    void (*jit_startup) (void) = (void(*)(void))(void *)(jit_code + funcinfo_startup->offset);
+    int64_t (*jit_main) (int) = (int64_t(*)(int))(void *)(jit_code + funcinfo_main->offset);
 #pragma GCC diagnostic pop
     
-    asdf = jit_func(152);
+    jit_startup();
+    asdf = jit_main(152);
     
     printf("%lld\n", asdf);
     printf("%llu\n", asdf);

@@ -8,15 +8,6 @@ byte_buffer * code = 0;
 byte_buffer * static_data = 0;
 byte_buffer * global_data = 0;
 
-void log_static_relocation(uint64_t loc, uint64_t val)
-{
-    // FIXME
-}
-void log_global_relocation(uint64_t loc, uint64_t val)
-{
-    // FIXME
-}
-
 #include "code_emitter.c"
 
 enum {
@@ -80,6 +71,22 @@ GenericList * list_prepend(GenericList ** list, void * item)
     entry->next = *list;
     *list = entry;
     return entry;
+}
+
+struct _FuncDef;
+typedef struct _VisibleFunc
+{
+    struct _FuncDef * funcdef;
+    uint64_t offset;
+} VisibleFunc;
+
+void log_static_relocation(uint64_t loc, uint64_t val)
+{
+    // FIXME
+}
+void log_global_relocation(uint64_t loc, uint64_t val)
+{
+    // FIXME
 }
 
 typedef struct _StructData
@@ -440,6 +447,23 @@ typedef struct _FuncDef
     uint64_t code_offset; // only added when the function's body is compiled, 0 otherwise
     struct _FuncDef * next;
 } FuncDef;
+
+GenericList * visible_funcs = 0;
+
+VisibleFunc * find_visible_function(char * name)
+{
+    GenericList * last = visible_funcs;
+    while (last && strncmp(((VisibleFunc *)(last->item))->funcdef->name, name, strlen(name)) != 0)
+        last = last->next;
+    return last->item;
+}
+void add_visible_function(FuncDef * funcdef, uint64_t offset)
+{
+    VisibleFunc * info = (VisibleFunc *)malloc(sizeof(VisibleFunc));
+    info->funcdef = funcdef;
+    info->offset = offset;
+    list_add(&visible_funcs, info);
+}
 
 FuncDef * funcdefs = 0;
 
@@ -2066,6 +2090,8 @@ void compile_defs_compile(Node * ast)
         FuncDef * funcdef = get_funcdef(name_text);
         assert(funcdef);
         
+        add_visible_function(funcdef, code->len);
+        
         stack_loc = 0;
         
         return_type = funcdef->signature->item;
@@ -2179,11 +2205,17 @@ void compile_globals_collect(Node * ast)
             
             if (code->len != code_start)
             {
-                puts("TODO: store value");
-                assert(0);
+                // FIXME aggregates
+                assert(val->val->type->size <= 8);
+                emit_pop_safe(RDX);
+                // move variable location into RAX
+                emit_mov_imm(RAX, var->val->loc, 8);
+                log_global_relocation(code->len - 8, var->val->loc);
+                emit_mov_preg_reg(RAX, RDX, val->val->type->size);
             }
             else
             {
+                assert(stack_offset == 0);
                 // large/aggregate
                 if (val->val->loc)
                     memcpy((void *)var->val->loc, (void *)val->val->loc, val->val->type->size);
@@ -2203,18 +2235,39 @@ void compile(Node * ast)
     {
     case PROGRAM:
     {
+        // collect function declarations
         Node * next = ast->first_child;
         while (next)
         {
             compile_defs_collect(next);
             next = next->next_sibling;
         }
+        
+        // compile initializers (including non-static, hence function prelude/postlude)
+        FuncDef * funcdef = add_funcdef("");
+        GenericList * signature = 0;
+        list_add(&signature, get_type("void"));
+        funcdef->signature = signature;
+        funcdef->num_args = 0;
+        funcdef->vismod = "";
+
+        add_visible_function(funcdef, code->len);
+        emit_push(RBP);
+        emit_mov(RBP, RSP, 8);
+        emit_sub_imm(RSP, stack_loc);
+        
         next = ast->first_child;
         while (next)
         {
             compile_globals_collect(next);
             next = next->next_sibling;
         }
+        
+        emit_add_imm(RSP, stack_loc);
+        emit_pop(RBP);
+        emit_ret();
+        
+        // compile individual function definitions
         next = ast->first_child;
         while (next)
         {

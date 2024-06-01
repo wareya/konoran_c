@@ -1,5 +1,6 @@
 //i32 myglobal = 69i32 + 5i32;
-i32 myglobal = 0i32;
+i32 myglobal = 1000i32;
+i32 myglobal2 = myglobal;
 
 i64 main()//i32 asdf2asdf)
 {
@@ -14,8 +15,9 @@ i64 main()//i32 asdf2asdf)
     */
     //myglobal = 15152u32;
     //myglobal = 0u32;
-    u8 asdf = !myglobal;
-    return ((asdf) as i8) as i64;
+    u8 asdf = !myglobal2;
+    //return ((asdf) as i8) as i64;
+    return (myglobal2) as i64;
     
     /*
     f32 a = 1.0f32;
