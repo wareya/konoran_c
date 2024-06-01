@@ -2,7 +2,7 @@
 i32 myglobal = 1000i32;
 i32 myglobal2 = myglobal;
 
-i64 main()//i32 asdf2asdf)
+i64 main(i32 asdf2asdf)
 {
     //return (16452.2f32 / 952.562f32) as i64;
     //f32 a = 16452.2f32;

@@ -39,7 +39,6 @@ enum {
 
 
 uint8_t last_is_terminator = 0;
-
 size_t label_anon_num = 1;
 
 // struct for label themselves OR label uses (jumps)
@@ -475,6 +474,8 @@ void emit_xorps(int reg_d, int reg_s)
 
 void emit_bts(int reg, uint8_t bit)
 {
+    last_is_terminator = 0;
+    
     assert(bit <= 63);
     assert(reg <= RDI);
     reg &= 7;
@@ -495,6 +496,8 @@ void emit_bts(int reg, uint8_t bit)
 }
 void emit_bt(int reg, uint8_t bit)
 {
+    last_is_terminator = 0;
+    
     assert(bit <= 63);
     assert(reg <= RDI);
     reg &= 7;
@@ -1176,8 +1179,8 @@ void emit_push_val(int64_t val)
 }
 void emit_breakpoint(void)
 {
-    byte_push(code, 0xCC);
     last_is_terminator = 0;
+    byte_push(code, 0xCC);
 }
 void emit_mov_offset(int reg1, int reg2, int64_t offset, size_t size)
 {
