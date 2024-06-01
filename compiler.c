@@ -8,6 +8,15 @@ byte_buffer * code = 0;
 byte_buffer * static_data = 0;
 byte_buffer * global_data = 0;
 
+void log_static_relocation(uint64_t loc, uint64_t val)
+{
+    // FIXME
+}
+void log_global_relocation(uint64_t loc, uint64_t val)
+{
+    // FIXME
+}
+
 #include "code_emitter.c"
 
 enum {
@@ -343,14 +352,28 @@ Variable * add_global(char * name, Type * type)
     return global;
 }
 
-uint64_t push_static_data(uint8_t * data, size_t len)
+uint64_t push_data_to(uint8_t * data, size_t len, byte_buffer * buf)
 {
     size_t align = guess_alignment_from_size(len);
-    while (static_data->len % align)
-        byte_push(static_data, 0);
-    uint64_t loc = static_data->len;
-    bytes_push(static_data, data, len);
-    return loc;
+    while (buf->len % align)
+        byte_push(buf, 0);
+    uint64_t loc = buf->len;
+    if (data)
+        bytes_push(buf, data, len);
+    else
+    {
+        for(size_t i = 0; i < len; i++)
+            byte_push(buf, 0);
+    }
+    return loc + (uint64_t)(buf->data);
+}
+uint64_t push_static_data(uint8_t * data, size_t len)
+{
+    return push_data_to(data, len, static_data);
+}
+uint64_t push_global_data(uint8_t * data, size_t len)
+{
+    return push_data_to(data, len, global_data);
 }
 
 // Returns a pointer to a buffer with N+1 bytes reserved, and at least one null terminator.
@@ -1458,8 +1481,21 @@ void compile_code(Node * ast, int want_ptr)
             else
                 assert(("FIXME/TODO non-stack rvars", 0));
         }
+        else if ((var = get_global(ast->text, ast->textlen)))
+        {
+            // FIXME aggregates
+            assert(var->val->type->size <= 8);
+            
+            emit_mov_imm(RDX, var->val->loc, 8);
+            emit_mov_reg_preg(RAX, RDX, var->val->type->size);
+            emit_push_safe(RAX);
+            
+            Value * value = new_value(var->val->type);
+            value->kind = VAL_STACK_TOP;
+            stack_push_new(value);
+        }
         else
-            assert(("FIXME/TODO global rvars", 0));
+            assert(("unknown rvar (function name? TODO/FIXME)", 0));
     } break;
     case LVAR:
     {
@@ -1475,7 +1511,6 @@ void compile_code(Node * ast, int want_ptr)
             {
                 emit_lea(RAX, RBP, -var->val->loc);
                 emit_push_safe(RAX);
-                
                 stack_push_new(var->val);
             }
             else
@@ -1483,8 +1518,21 @@ void compile_code(Node * ast, int want_ptr)
         }
         else if ((var = get_global(ast->text, ast->textlen)))
         {
-            assert(("unhandled lvar global origin", 0));
+            if (var->val->kind == VAL_GLOBAL)
+            {
+                emit_mov_imm(RAX, var->val->loc, 8);
+                log_global_relocation(code->len - 8, var->val->loc);
+                emit_push_safe(RAX);
+                
+                Value * value = new_value(var->val->type);
+                value->kind = VAL_ANYWHERE;
+                stack_push_new(value);
+            }
+            else
+                assert(("unhandled lvar const origin", 0));
         }
+        else
+            assert(("unknown lvar", 0));
     } break;
     case DECLARATION:
     case FULLDECLARATION:
@@ -2113,7 +2161,10 @@ void compile_globals_collect(Node * ast)
         Node * name = nth_child(ast, 2);
         char * name_text = strcpy_len(name->text, name->textlen);
         
-        add_global(name_text, type);
+        Variable * var = add_global(name_text, type);
+        var->val->kind = VAL_GLOBAL;
+        var->val->loc = push_global_data(0, type->size);
+        
         if (ast->type == GLOBALFULLDECLARATION)
         {
             Node * expr = nth_child(ast, 3);
@@ -2121,12 +2172,20 @@ void compile_globals_collect(Node * ast)
             
             size_t code_start = code->len;
             compile_code(expr, 0);
+            
             StackItem * val = stack_pop();
             assert(val);
+            assert(types_same(type, val->val->type));
+            
             if (code->len != code_start)
+            {
                 puts("TODO: store value");
-            puts("TODO: store value");
-            assert(0);
+                assert(0);
+            }
+            else
+            {
+                assert(("FIXME: const-initialized mutable global init", 0));
+            }
         }
     } break;
     default: {}
@@ -2168,6 +2227,7 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
 {
     code = (byte_buffer *)zalloc(sizeof(byte_buffer));
     static_data = (byte_buffer *)zalloc(sizeof(byte_buffer));
+    global_data = (byte_buffer *)zalloc(sizeof(byte_buffer));
     
     add_primitive_type("u8", PRIM_U8);
     add_primitive_type("u16", PRIM_U16);
