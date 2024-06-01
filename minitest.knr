@@ -1,4 +1,4 @@
-constexpr i32 myglobal = 69i32 + 5i32;
+i32 myglobal;// = 69i32 + 5i32;
 
 i64 main()//i32 asdf2asdf)
 {
@@ -11,6 +11,7 @@ i64 main()//i32 asdf2asdf)
     u8 b = 2u8;
     return ((a == 1u8) as i8) as i64;
     */
+    myglobal = 15152u32;
     u8 asdf = !0u8;
     return ((asdf) as i8) as i64;
     

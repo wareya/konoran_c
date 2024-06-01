@@ -4,17 +4,32 @@
 #include <math.h> // remainder, remainderf
 #include "buffers.h"
 
+byte_buffer * code = 0;
+byte_buffer * static_data = 0;
+byte_buffer * global_data = 0;
+
+#include "code_emitter.c"
+
+enum {
+    ABI_WIN,
+    ABI_SYSV,
+};
+
+uint8_t abi = ABI_WIN;
+
+// Windows:
+// xmm0/rcx    xmm1/rdx    xmm2/r8    xmm3/r9    stack(rtl, top = leftmost)
+
+// SystemV:
+// RDI, RSI, RDX, RCX, R8, R9 (nonfloat)
+// xmm0~7 (float)
+// stack(rtl, top = leftmost)
+// horrifyingly, the stack is non-monotonic!!! an arg can go to stack, then the next arg to reg, then the next arg to stack!!!
+
+
 #ifndef zalloc
 #define zalloc(X) (calloc(1, (X)))
 #endif
-
-
-
-byte_buffer * code = 0;
-byte_buffer * static_data = 0;
-size_t globaleft_ata_len = 0;
-
-#include "code_emitter.c"
 
 size_t guess_alignment_from_size(size_t size)
 {
@@ -126,23 +141,6 @@ uint8_t type_is_float(Type * type)
     return type->primitive_type >= PRIM_F32 && type->primitive_type <= PRIM_F64;
 }
 
-
-enum {
-    ABI_WIN,
-    ABI_SYSV,
-};
-
-uint8_t abi = ABI_WIN;
-// Windows:
-// xmm0/rcx    xmm1/rdx    xmm2/r8    xmm3/r9    stack(rtl, top = leftmost)
-
-// SystemV:
-// RDI, RSI, RDX, RCX, R8, R9 (nonfloat)
-// xmm0~7 (float)
-// stack(rtl, top = leftmost)
-// horrifyingly, the stack is non-monotonic!!! an arg can go to stack, then the next arg to reg, then the next arg to stack!!!
-
-
 Type * new_type(char * name, int variant)
 {
     Type * type = (Type *)zalloc(sizeof(Type));
@@ -243,12 +241,22 @@ Type * get_type(char * name)
     return last;
 }
 
+enum { // global visibility type
+    VIS_INVALID = 0,
+    VIS_DEFAULT,
+    VIS_PRIVATE,
+    VIS_EXPORT,
+    VIS_USING,
+    VIS_IMPORT,
+};
+
 enum { // kind
     VAL_INVALID = 0,
-    VAL_CONSTANT,
-    VAL_STACK_BOTTOM,
-    VAL_STACK_TOP,
-    VAL_ANYWHERE,
+    VAL_CONSTANT, // relocated relative to static global data
+    VAL_GLOBAL, // relocated relative to dynamic global data
+    VAL_STACK_BOTTOM, // pointer relative to base pointer
+    VAL_STACK_TOP, // on stack
+    VAL_ANYWHERE, // absolute pointer
 };
 
 //VAL_CONSTANTPTR,
@@ -299,12 +307,22 @@ Variable * new_variable(char * name, Type * type)
 }
 
 Variable * global_vars = 0;
+
+Variable * get_global(char * name, size_t name_len)
+{
+    Variable * var = global_vars;
+    while (var && strncmp(var->name, name, name_len) != 0)
+        var = var->next_var;
+    return var;
+}
+
 Variable * add_global(char * name, Type * type)
 {
     Variable * global = new_variable(name, type);
     
     if (!global_vars)
     {
+        puts("-- overwriting...");
         global_vars = global;
         return global;
     }
@@ -323,6 +341,16 @@ Variable * add_global(char * name, Type * type)
     last->next_var = global;
     
     return global;
+}
+
+uint64_t push_static_data(uint8_t * data, size_t len)
+{
+    size_t align = guess_alignment_from_size(len);
+    while (static_data->len % align)
+        byte_push(static_data, 0);
+    uint64_t loc = static_data->len;
+    bytes_push(static_data, data, len);
+    return loc;
 }
 
 // Returns a pointer to a buffer with N+1 bytes reserved, and at least one null terminator.
@@ -1395,32 +1423,43 @@ void compile_code(Node * ast, int want_ptr)
     case RVAR_NAME:
     {
         printf("in RVAR_NAME!! want pointer... %d codelen %llX...\n", want_ptr, code->len);
-        Variable * var = get_local(ast);
-        assert(var);
-        
-        // FIXME globals
-        assert(var->val->kind == VAL_STACK_BOTTOM);
-        // FIXME aggregates
-        assert(var->val->type->size <= 8);
-        
-        Type * type = var->val->type;
-        if (want_ptr != 0)
+        Variable * var = 0;
+        if ((var = get_local(ast)))
         {
-            type = make_ptr_type(type);
-            emit_lea(RAX, RBP, -var->val->loc);
-            puts("emitting LEA...");
+            Type * type = var->val->type;
+            
+            if (var->val->kind == VAL_STACK_BOTTOM)
+            {
+                if (want_ptr != 0)
+                {
+                    type = make_ptr_type(type);
+                    emit_lea(RAX, RBP, -var->val->loc);
+                    puts("emitting LEA...");
+                    
+                    emit_push_safe(RAX);
+                    Value * value = new_value(type);
+                    value->kind = VAL_STACK_TOP;
+                    stack_push_new(value);
+                }
+                else
+                {
+                    // FIXME aggregates
+                    assert(var->val->type->size <= 8);
+                    
+                    emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
+                    
+                    printf("emitting mov with offset of %lld...\n", -var->val->loc);
+                    emit_push_safe(RAX);
+                    Value * value = new_value(type);
+                    value->kind = VAL_STACK_TOP;
+                    stack_push_new(value);
+                }
+            }
+            else
+                assert(("FIXME/TODO non-stack rvars", 0));
         }
         else
-        {
-            emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
-            printf("emitting mov with offset of %lld...\n", -var->val->loc);
-        }
-        emit_push_safe(RAX);
-        
-        Value * value = new_value(type);
-        value->kind = VAL_STACK_TOP;
-        
-        stack_push_new(value);
+            assert(("FIXME/TODO global rvars", 0));
     } break;
     case LVAR:
     {
@@ -1428,20 +1467,24 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case LVAR_NAME:
     {
-        puts("in LVAR_NAME!!");
         assert(want_ptr == WANT_PTR_VIRTUAL);
-        Variable * var = get_local(ast);
-        assert(var);
-        
-        // FIXME globals
-        assert(var->val->kind == VAL_STACK_BOTTOM);
-        // FIXME aggregates
-        assert(var->val->type->size <= 8);
-        
-        emit_lea(RAX, RBP, -var->val->loc);
-        emit_push_safe(RAX);
-        
-        stack_push_new(var->val);
+        Variable * var = 0;
+        if ((var = get_local(ast)))
+        {
+            if (var->val->kind == VAL_STACK_BOTTOM)
+            {
+                emit_lea(RAX, RBP, -var->val->loc);
+                emit_push_safe(RAX);
+                
+                stack_push_new(var->val);
+            }
+            else
+                assert(("unhandled lvar pointer origin", 0));
+        }
+        else if ((var = get_global(ast->text, ast->textlen)))
+        {
+            assert(("unhandled lvar global origin", 0));
+        }
     } break;
     case DECLARATION:
     case FULLDECLARATION:
@@ -2024,69 +2067,6 @@ void compile_defs_compile(Node * ast)
     }
 }
 
-enum {
-    VIS_DEFAULT,
-    VIS_PRIVATE,
-    VIS_EXPORT,
-    VIS_USING,
-    VIS_IMPORT,
-};
-
-uint64_t push_static_data(uint8_t * data, size_t len)
-{
-    size_t align = guess_alignment_from_size(len);
-    while (static_data->len % align)
-        byte_push(static_data, 0);
-    uint64_t loc = static_data->len;
-    bytes_push(static_data, data, len);
-    return loc;
-}
-
-typedef struct _Const {
-    char * name;
-    Type * type;
-    uint64_t pos;
-    struct _Const * next;
-} Const;
-
-Const * consts = 0;
-
-Const * get_global_const(char * name, size_t name_len)
-{
-    Const * myconst = consts;
-    while (myconst && strncmp(myconst->name, name, name_len) != 0)
-        myconst = myconst->next;
-    return myconst;
-}
-
-Const * add_global_const(char * name, Type * type, uint64_t pos)
-{
-    Const * last = consts;
-    while (last)
-    {
-        if (strcmp(last->name, name) == 0)
-        {
-            printf("Error: tried to redefine global const %s!\n", last->name);
-            assert(0);
-        }
-        if (!last->next)
-            break;
-        last = last->next;
-    }
-    
-    Const * item = (Const *)zalloc(sizeof(Const));
-    item->name = name;
-    item->type = type;
-    item->pos = pos;
-    item->next = 0;
-    
-    if (last)
-        last->next = item;
-    else
-        consts = item;
-    return item;
-}
-
 void compile_globals_collect(Node * ast)
 {
     // collect globals
@@ -2120,31 +2100,34 @@ void compile_globals_collect(Node * ast)
         
         assert(types_same(type, val->val->type));
         
-        uint64_t loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
-        add_global_const(name_text, val->val->type, loc);
+        Variable * var = add_global(name_text, type);
+        var->val->kind = VAL_CONSTANT;
+        var->val->loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
     } break;
+    case GLOBALDECLARATION:
     case GLOBALFULLDECLARATION:
     {
         Node * vismod = nth_child(ast, 0);
         char * vismod_text = strcpy_len(vismod->text, vismod->textlen);
-        if (vismod_text)
-            printf("vm: %s\n", vismod_text);
-        Node * type = nth_child(ast, 1);
+        Type * type = parse_type(nth_child(ast, 1));
         Node * name = nth_child(ast, 2);
         char * name_text = strcpy_len(name->text, name->textlen);
-        printf("name: %s\n", name_text);
         
-        Node * expr = nth_child(ast, 3);
-        assert(expr);
-        
-        size_t code_start = code->len;
-        compile_code(expr, 0);
-        StackItem * val = stack_pop();
-        assert(val);
-        if (code->len != code_start)
+        add_global(name_text, type);
+        if (ast->type == GLOBALFULLDECLARATION)
+        {
+            Node * expr = nth_child(ast, 3);
+            assert(expr);
+            
+            size_t code_start = code->len;
+            compile_code(expr, 0);
+            StackItem * val = stack_pop();
+            assert(val);
+            if (code->len != code_start)
+                puts("TODO: store value");
             puts("TODO: store value");
-        puts("TODO: store value");
-        assert(0);
+            assert(0);
+        }
     } break;
     default: {}
     }
