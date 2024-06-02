@@ -1869,8 +1869,6 @@ void compile_code(Node * ast, int want_ptr)
                 Value * value = new_value(callee_return_type);
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
-                
-                //assert(("TODO: FUNCARGS", 0));
             } break;
             case ARRAYINDEX:
             {
@@ -2396,8 +2394,8 @@ void compile_code(Node * ast, int want_ptr)
             char c = op_text[0];
             if (c == 's' && op_text[2] == 'l') c = 'L';
             if (c == 's' && op_text[2] == 'r') c = 'R';
-            if (op_text[2] == '&') c = 'a';
-            if (op_text[2] == '|') c = 'o';
+            if (op->textlen == 2 && op_text[2] == '&') c = 'a';
+            if (op->textlen == 2 && op_text[2] == '|') c = 'o';
             compile_infix_basic(expr_1, expr_2, c);
         }
         else if (strcmp(op_text, "==") == 0
