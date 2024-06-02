@@ -56,6 +56,7 @@ Label * new_label(char * name, size_t num, ptrdiff_t loc)
 {
     Label * label = (Label *)malloc(sizeof(Label));
     memset(label, 0, sizeof(Label));
+    
     label->loc = loc;
     label->name = name;
     label->num = num;
@@ -257,6 +258,26 @@ void emit_sub_imm(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
+void emit_sub_imm32(int reg, int64_t val)
+{
+    last_is_terminator = 0;
+    
+    assert(reg <= RDI);
+    assert(("negative or 64-bit immediate subtraction yet supported", (val >= 0 && val <= 2147483647)));
+    
+    byte_push(code, 0x48);
+    if (reg == RAX)
+    {
+        byte_push(code, 0x2D);
+        bytes_push_int(code, (uint64_t)val, 4);
+    }
+    else
+    {
+        byte_push(code, 0x81);
+        byte_push(code, 0xE8 | reg);
+        bytes_push_int(code, (uint64_t)val, 4);
+    }
+}
 void emit_add_imm(int reg, int64_t val)
 {
     last_is_terminator = 0;
@@ -278,6 +299,26 @@ void emit_add_imm(int reg, int64_t val)
         byte_push(code, 0x83);
         byte_push(code, 0xC0 | reg);
         byte_push(code, (uint8_t)val);
+    }
+    else
+    {
+        byte_push(code, 0x81);
+        byte_push(code, 0xC0 | reg);
+        bytes_push_int(code, (uint64_t)val, 4);
+    }
+}
+void emit_add_imm32(int reg, int64_t val)
+{
+    last_is_terminator = 0;
+    
+    assert(reg <= RDI);
+    assert(("negative or 64-bit immediate addition yet supported", (val >= 0 && val <= 2147483647)));
+    
+    byte_push(code, 0x48);
+    if (reg == RAX)
+    {
+        byte_push(code, 0x05);
+        bytes_push_int(code, (uint64_t)val, 4);
     }
     else
     {
@@ -1150,8 +1191,31 @@ void emit_breakpoint(void)
 }
 void emit_lea(int reg_d, int reg_s, int64_t offset)
 {
+    last_is_terminator = 0;
     emit_mov_offsetlike(reg_d, reg_s, offset, 8,
         0xFF, // invalid
         0x8D // actual op
     );
+}
+void emit_rep_movs(int size)
+{
+    last_is_terminator = 0;
+    
+    assert(size == 1 || size == 2 || size == 4 || size == 8);
+    if (size == 2)
+        byte_push(code, 0x66);
+    byte_push(code, 0xF3);
+    if (size == 8)
+        byte_push(code, 0x48);
+    byte_push(code, (size == 1) ? 0xA4 : 0xA5);
+}
+void emit_call(int reg)
+{
+    last_is_terminator = 0;
+    assert(reg <= R15);
+    if (reg >= R8)
+        byte_push(code, 0x41);
+    byte_push(code, 0xFF);
+    reg &= 7;
+    byte_push(code, 0xD0 | reg);
 }

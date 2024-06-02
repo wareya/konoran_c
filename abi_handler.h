@@ -6,8 +6,11 @@ enum {
     ABI_SYSV,
 };
 
+#ifdef _WIN32
 uint8_t abi = ABI_WIN;
-
+#else
+uint8_t abi = ABI_SYSV;
+#endif
 
 // Windows:
 // xmm0/rcx    xmm1/rdx    xmm2/r8    xmm3/r9    stack(rtl, top = leftmost)
@@ -22,7 +25,7 @@ uint8_t abi = ABI_WIN;
 size_t abi_i64s_used = 0;
 size_t abi_f64s_used = 0;
 size_t abi_stack_used = 0;
-void abi_reset_state()
+void abi_reset_state(void)
 {
     abi_i64s_used = 0;
     abi_f64s_used = 0;
@@ -37,13 +40,13 @@ void abi_reset_state()
 // etc
 //
 // On windows ABI, RBP offsets start at +48, because:
-// - the first 8 bytes are reserved for the old RBP before copying RSP into RBP
-// - the next 8 bytes are reserved for the return address
+// - 8 bytes are reserved for the old RBP before copying RSP into RBP
+// - 8 bytes are reserved for the return address
 // - the next 32 bytes are reserved for the callee to use freely
 //
 // On sysv ABI, RBP offsets start at +16, because:
-// - The first 8 bytes are reserved for the old RBP before copying RSP into RBP
-// - The next 8 bytes are reserved for the return address
+// - 8 bytes are reserved for the old RBP before copying RSP into RBP
+// - 8 bytes are reserved for the return address
 //
 // Later stack-spill arguments always have higher offsets, e.g. the first may be +48, second may be +56, etc.
 // This is true both on sysv and windows.
@@ -107,4 +110,11 @@ int64_t abi_get_next(uint8_t word_is_float)
             return -offset;
         }
     }
+}
+int64_t abi_get_min_stack_size(void)
+{
+    if (abi == ABI_WIN)
+        return 40;
+    else
+        return 8;
 }

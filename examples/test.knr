@@ -1,9 +1,6 @@
 // a very simple gravity simulation
 void main()
 {
-    f64 asdfasdf = 0.0f64 * 0.0f64 * 0.0f64;
-    f64 asdfasdf2 = 0.0f64 * 0.0f64 + 0.0f64;
-    f64 asdfasdf3 = 0.0f64 + 0.0f64 * 0.0f64;
     f64 yvel = 0.0f64;
     f64 y = 0.0f64;
     f64 gravity = 9.8f64;

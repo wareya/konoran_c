@@ -368,7 +368,6 @@ export_extern void main()
         (&agidkr) bit_as ptr(u8),
         (0u64) bit_as ptr(u8),
     ];
-    
     array(ptr(u8), 2) testargs2 = [
         (&['!', '%', 'X', '\n', 0u8]) bit_as ptr(u8),
         (0u64) bit_as ptr(u8),

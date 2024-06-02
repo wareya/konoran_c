@@ -12,9 +12,14 @@ byte_buffer * global_data = 0;
 
 #include "abi_handler.h"
 
-#ifndef zalloc
-#define zalloc(X) (calloc(1, (X)))
-#endif
+void * zero_alloc(size_t n)
+{
+    void * ret = calloc(1, n);
+    //void * ret = malloc(n);
+    //if (ret)
+    //    memset(ret, 0, n);
+    return ret;
+}
 
 // strncmp but checks len of left string
 int strcmp_len(const char * a, const char * b, size_t len)
@@ -39,12 +44,13 @@ size_t guess_alignment_from_size(size_t size)
 typedef struct _GenericList
 {
     void * item;
+    uint64_t payload;
     struct _GenericList * next;
 } GenericList;
 
 GenericList * list_add(GenericList ** list, void * item)
 {
-    GenericList * entry = (GenericList *)zalloc(sizeof(GenericList));
+    GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
     entry->item = item;
     entry->next = 0;
     
@@ -63,7 +69,7 @@ GenericList * list_add(GenericList ** list, void * item)
 }
 GenericList * list_prepend(GenericList ** list, void * item)
 {
-    GenericList * entry = (GenericList *)zalloc(sizeof(GenericList));
+    GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
     entry->item = item;
     entry->next = *list;
     *list = entry;
@@ -77,13 +83,37 @@ typedef struct _VisibleFunc
     uint64_t offset;
 } VisibleFunc;
 
+GenericList * static_relocs = 0;
 void log_static_relocation(uint64_t loc, uint64_t val)
 {
-    // FIXME
+    GenericList * last = list_add(&static_relocs, (void *)loc);
+    last->payload = val;
 }
+GenericList * global_relocs = 0;
 void log_global_relocation(uint64_t loc, uint64_t val)
 {
-    // FIXME
+    GenericList * last = list_add(&global_relocs, (void *)loc);
+    last->payload = val;
+}
+GenericList * stack_size_usage = 0;
+void log_stack_size_usage(uint64_t loc)
+{
+    GenericList * last = list_add(&stack_size_usage, 0);
+    last->payload = loc;
+}
+void do_fix_stack_size_usages(uint32_t stack_size)
+{
+    // align to 16 bytes to simplify function calls
+    while (stack_size % 16)
+        stack_size++;
+    
+    GenericList * last = stack_size_usage;
+    while (last)
+    {
+        uint64_t loc = last->payload;
+        memcpy(&(code->data[loc]), &stack_size, 4);
+        last = last->next;
+    }
 }
 
 typedef struct _StructData
@@ -120,12 +150,15 @@ enum { // type variant
 typedef struct _Type
 {
     char * name;
-    size_t size;
+    size_t size; // for all
     int variant; // for all
+    
     int primitive_type; // for primitives
     struct _Type * inner_type; // for pointers and arrays
+    struct _FuncDef * funcdef; // for funcptrs
     uint64_t inner_count; // for arrays
     StructData * struct_data; // for structs
+    
     struct _Type * next_type;
 } Type;
 Type * get_type_from_ast(Node * node);
@@ -141,6 +174,10 @@ uint8_t types_same(Type * a, Type * b)
     assert(0);
 }
 
+uint8_t type_is_void(Type * type)
+{
+    return type->primitive_type == PRIM_VOID || type->size == 0;
+}
 uint8_t type_is_int(Type * type)
 {
     return type->primitive_type >= PRIM_U8 && type->primitive_type <= PRIM_I64;
@@ -156,7 +193,7 @@ uint8_t type_is_float(Type * type)
 
 Type * new_type(char * name, int variant)
 {
-    Type * type = (Type *)zalloc(sizeof(Type));
+    Type * type = (Type *)zero_alloc(sizeof(Type));
     type->name = name;
     type->variant = variant;
     return type;
@@ -166,6 +203,14 @@ Type * make_ptr_type(Type * inner)
 {
     Type * outer = new_type("ptr", TYPE_POINTER);
     outer->inner_type = inner;
+    outer->size = 8;
+    return outer;
+}
+
+Type * make_funcptr_type(struct _FuncDef * funcdef)
+{
+    Type * outer = new_type("funcptr", TYPE_FUNCPOINTER);
+    outer->funcdef = funcdef;
     outer->size = 8;
     return outer;
 }
@@ -185,7 +230,7 @@ Type * parse_type(Node * ast)
         //return get_type_from_ast(ast->first_child);
     if (ast->type == PTR_TYPE)
         return make_ptr_type(parse_type(ast->first_child));
-    printf("TODO: parse type variant %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
+    printf("TODO: parse type variant %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
     assert(0);
 }
 
@@ -298,7 +343,7 @@ typedef struct _Value
 
 Value * new_value(Type * type)
 {
-    Value * val = (Value *)zalloc(sizeof(Value));
+    Value * val = (Value *)zero_alloc(sizeof(Value));
     val->type = type;
     return val;
 }
@@ -312,7 +357,7 @@ typedef struct _Variable
 
 Variable * new_variable(char * name, Type * type)
 {
-    Variable * var = (Variable *)zalloc(sizeof(Variable));
+    Variable * var = (Variable *)zero_alloc(sizeof(Variable));
     Value * val = new_value(type);
     var->val = val;
     var->name = name;
@@ -384,8 +429,9 @@ uint64_t push_global_data(uint8_t * data, size_t len)
 char * strcpy_len(char * str, size_t len)
 {
     if (!str)
-        return (char *)zalloc(1);
-    char * ret = (char *)zalloc(len + 1);
+        return (char *)zero_alloc(1);
+    char * ret = (char *)zero_alloc(len + 1);
+    assert(ret);
     char * ret_copy = ret;
     char c = 0;
     while ((c = *str++) && len-- > 0)
@@ -409,7 +455,7 @@ StackItem * stack_push(StackItem * item)
 }
 StackItem * stack_push_new(Value * val)
 {
-    StackItem * item = (StackItem *)zalloc(sizeof(StackItem));
+    StackItem * item = (StackItem *)zero_alloc(sizeof(StackItem));
     item->val = val;
     return stack_push(item);
 }
@@ -442,6 +488,7 @@ typedef struct _FuncDef
     size_t num_args;
     char * vismod;
     uint64_t code_offset; // only added when the function's body is compiled, 0 otherwise
+    uint8_t is_import; // if true, code_offset is a raw function pointer
     struct _FuncDef * next;
 } FuncDef;
 
@@ -456,7 +503,7 @@ VisibleFunc * find_visible_function(char * name)
 }
 void add_visible_function(FuncDef * funcdef, uint64_t offset)
 {
-    VisibleFunc * info = (VisibleFunc *)malloc(sizeof(VisibleFunc));
+    VisibleFunc * info = (VisibleFunc *)zero_alloc(sizeof(VisibleFunc));
     info->funcdef = funcdef;
     info->offset = offset;
     list_add(&visible_funcs, info);
@@ -466,7 +513,7 @@ FuncDef * funcdefs = 0;
 
 FuncDef * add_funcdef(char * name)
 {
-    FuncDef * entry = (FuncDef *)zalloc(sizeof(FuncDef));
+    FuncDef * entry = (FuncDef *)zero_alloc(sizeof(FuncDef));
     entry->name = name;
     
     if (!funcdefs)
@@ -497,6 +544,63 @@ FuncDef * get_funcdef(char * name)
     while (entry && strcmp(entry->name, name) != 0)
         entry = entry->next;
     return entry;
+}
+
+
+GenericList * funcimports = 0;
+void register_funcimport(char * name, char * sigtext, void * ptr)
+{
+    uint64_t * info = (uint64_t *)zero_alloc(sizeof(void *) * 3);
+    info[0] = (uint64_t)name;
+    info[1] = (uint64_t)sigtext;
+    info[2] = (uint64_t)ptr;
+    
+    list_add(&funcimports, info);
+}
+
+void add_funcimport(char * name, char * sigtext, void * ptr)
+{
+    printf("a... %s\n", name);
+    printf("b... %s\n", sigtext);
+    
+    Token * failed_last = 0;
+    Token * tokens = tokenize(sigtext, &failed_last);
+    
+    Token * unparsed_tokens = 0;
+    Node * ast = parse_as(tokens, FUNCPTR_TYPE, &unparsed_tokens);
+    if (!ast)
+        assert(("function import failed to parse", 0));
+    else if (unparsed_tokens)
+        assert(("function import couldn't be fully parsed", 0));
+    
+    Type * return_type = parse_type(nth_child(ast, 0));
+    GenericList * signature = 0;
+    GenericList * arg_names = 0;
+    list_add(&signature, return_type);
+    
+    Node * arg = nth_child(ast, 1)->first_child;
+    uint64_t num_args = 0;
+    while (arg)
+    {
+        Type * type = parse_type(arg->first_child);
+        assert(arg->first_child);
+        assert(type);
+        list_add(&signature, type);
+        char * arg_name = strcpy_len(nth_child(arg, 0)->text, nth_child(arg, 0)->textlen);
+        //printf("%s\n", arg_name);
+        list_add(&arg_names, arg_name);
+        arg = arg->next_sibling;
+        num_args++;
+    }
+    
+    FuncDef * funcdef = add_funcdef(name);
+    funcdef->arg_names = arg_names;
+    funcdef->signature = signature;
+    funcdef->num_args = num_args;
+    funcdef->vismod = "import_extern";
+    funcdef->is_import = 1;
+    
+    funcdef->code_offset = (uint64_t)ptr;
 }
 
 void compile_defs_collect(Node * ast)
@@ -623,9 +727,9 @@ uint8_t visitor_vars
 */
 
 // size of local vars etc
-size_t stack_loc = 0;
+ptrdiff_t stack_loc = 0;
 // size of temporary expression stuff pushed to the stack
-size_t stack_offset = 0;
+ptrdiff_t stack_offset = 0;
 
 enum {
     WANT_PTR_NONE,
@@ -643,6 +747,12 @@ void emit_pop_safe(int reg1)
 {
     puts("emitting base reg pop...");
     emit_pop(reg1);
+    stack_offset -= 8;
+}
+void emit_dry_pop_safe(void)
+{
+    puts("emitting base reg pop...");
+    emit_add_imm(RSP, 8);
     stack_offset -= 8;
 }
 void emit_push_val_safe(uint64_t val)
@@ -1433,6 +1543,8 @@ void compile_code(Node * ast, int want_ptr)
     {
     case RETURN:
     {
+        printf("return A %zu\n", stack_offset);
+        
         if (ast->first_child)
             compile_code(ast->first_child, 0);
         
@@ -1444,13 +1556,17 @@ void compile_code(Node * ast, int want_ptr)
             _push_small_if_const(expr->val);
             assert(return_type == expr->val->type);
             assert(return_type->size <= 8);
-            emit_pop_safe(RAX);
+            if (type_is_float(expr->val->type))
+                emit_xmm_pop_safe(XMM0, 8);
+            else if (!type_is_void(expr->val->type))
+                emit_pop_safe(RAX);
         }
         
-        printf("%lld\n", stack_offset);
+        printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
-        emit_add_imm(RSP, stack_loc);
+        emit_add_imm32(RSP, stack_loc);
+        log_stack_size_usage(code->len - 4);
         emit_pop(RBP);
         //emit_breakpoint();
         emit_ret();
@@ -1467,8 +1583,10 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case RVAR_NAME:
     {
-        printf("in RVAR_NAME!! want pointer... %d codelen %llX...\n", want_ptr, code->len);
+        printf("in RVAR_NAME!! want pointer... %d codelen %zX...\n", want_ptr, code->len);
         Variable * var = 0;
+        FuncDef * funcdef = 0;
+        char * name_text = strcpy_len(ast->text, ast->textlen);
         if ((var = get_local(ast->text, ast->textlen)))
         {
             Type * type = var->val->type;
@@ -1493,7 +1611,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
                     
-                    printf("emitting mov with offset of %lld...\n", -var->val->loc);
+                    printf("emitting mov with offset of %zu...\n", -var->val->loc);
                     emit_push_safe(RAX);
                     Value * value = new_value(type);
                     value->kind = VAL_STACK_TOP;
@@ -1509,6 +1627,12 @@ void compile_code(Node * ast, int want_ptr)
             assert(var->val->type->size <= 8);
             
             emit_mov_imm(RDX, var->val->loc, 8);
+            
+            if (var->val->kind == VAL_GLOBAL)
+                log_global_relocation(code->len - 8, var->val->loc);
+            else if (var->val->kind == VAL_CONSTANT)
+                log_static_relocation(code->len - 8, var->val->loc);
+            
             emit_mov_reg_preg(RAX, RDX, var->val->type->size);
             emit_push_safe(RAX);
             
@@ -1516,11 +1640,27 @@ void compile_code(Node * ast, int want_ptr)
             value->kind = VAL_STACK_TOP;
             stack_push_new(value);
         }
+        else if ((funcdef = get_funcdef(name_text)))
+        {
+            if (funcdef->is_import)
+                emit_push_val_safe(funcdef->code_offset);
+            else
+            {
+                //emit_mov_imm(RAX, funcdef->code_offset, 8);
+                // then log address
+                assert(("TODO: local function pointers", 0));
+            }
+            
+            Type * type = make_funcptr_type(funcdef);
+            Value * value = new_value(type);
+            value->kind = VAL_STACK_TOP;
+            stack_push_new(value);
+        }
         else
         {
             char * text = strcpy_len(ast->text, ast->textlen);
             printf("culprit: %s\n", text);
-            assert(("unknown rvar (function name? TODO/FIXME)", 0));
+            assert(("unknown rvar", 0));
         }
     } break;
     case LVAR:
@@ -1560,10 +1700,185 @@ void compile_code(Node * ast, int want_ptr)
         else
             assert(("unknown lvar", 0));
     } break;
+    case RHUNEXPR:
+    {
+        printf("before %zu\n", stack_offset);
+        compile_code(nth_child(ast, 0), WANT_PTR_VIRTUAL);
+        size_t i = 1;
+        Node * next = nth_child(ast, i);
+        
+        while (next)
+        {
+            switch (next->type)
+            {
+            case FUNCARGS:
+            {
+                size_t stack_offset_at_funcptr = stack_offset;
+                //emit_pop_safe(RAX);
+                
+                Value * expr = stack_pop()->val;
+                printf("%s %d\n", expr->type->name, expr->type->variant);
+                assert(("tried to call non-function", expr->type->variant == TYPE_FUNCPOINTER));
+                
+                FuncDef * funcdef = expr->type->funcdef;
+                Type * callee_return_type = funcdef->signature->item;
+                GenericList * arg = funcdef->signature->next;
+                
+                // TODO: Struct and array arguments need space underneath the arg list,
+                //  because they're passed as pointers to temporary on-stack stoarage,
+                //  but we can't allocate it ahead of time because we might have
+                //  anonymous struct/array storage later on in the arguments list,
+                //  which requires a stack depth of 0 to allocate.
+                // What's worse, stack arguments might be pushed before we get to
+                //  arguments that have address-of-array/struct-value ops in them,
+                //  which are responsible for anonymous struct/array storage.
+                // What do?
+                // Grow the stack normally, then extend it by the automatic storage space
+                //  and memcpy it over itself with an offset?
+                
+                // points to left side of last arg, from the left, from RBP as seen inside callee
+                int64_t arg_stack_size = abi_get_min_stack_size();
+                abi_reset_state();
+                while (arg)
+                {
+                    Type * type = arg->item;
+                    int64_t where = abi_get_next(type_is_float(type));
+                    if (-where > arg_stack_size)
+                        arg_stack_size = -where;
+                    
+                    arg = arg->next;
+                }
+                printf("stack size before %zd\n", arg_stack_size);
+                arg_stack_size += 8; // get pointer on right side of last arg, not left side
+                arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
+                
+                // stack must be aligned to 16 bytes before call, with arguments on the "top" end (leftwards)
+                while (arg_stack_size % 16)
+                    arg_stack_size++;
+                
+                
+                printf("stack size after %zd\n", arg_stack_size);
+                emit_sub_imm(RSP, arg_stack_size + 8);
+                
+                abi_reset_state();
+                arg = funcdef->signature->next;
+                Node * arg_node = next->first_child->first_child;
+                while (arg)
+                {
+                    assert(("too few args to function", arg_node));
+                    Type * type = arg->item;
+                    
+                    //compile_code(nth_child(node, 0), WANT_PTR_VIRTUAL);
+                    compile_code(arg_node, WANT_PTR_VIRTUAL);
+                    Value * arg_expr = stack_pop()->val;
+                    assert(arg_expr->type == type);
+                    
+                    int64_t where = abi_get_next(type_is_float(type));
+                    if (where >= 0)
+                    {
+                        if (where <= R15)
+                            emit_pop_safe(where);
+                        else
+                            emit_xmm_pop_safe(where, 8);
+                    }
+                    else
+                    {
+                        emit_pop_safe(RAX);
+                        where = -where;
+                        where -= 16; // remove rbp and return address from offset consideration
+                        emit_mov_into_offset(RSP, where, RAX, 8);
+                    }
+                    
+                    arg = arg->next;
+                    arg_node = arg_node->next_sibling;
+                }
+                assert(("too many args to function", !arg_node));
+                
+                /*
+                    char * name;
+                    GenericList * arg_names;
+                    GenericList * signature;
+                    size_t num_args;
+                    char * vismod;
+                    uint64_t code_offset; // only added when the function's body is compiled, 0 otherwise
+                    uint8_t is_import; // if true, code_offset is a raw function pointer
+                    struct _FuncDef * next;
+                */
+                
+                emit_mov_offset(RAX, RSP, arg_stack_size, 8);
+                emit_call(RAX);
+                
+                emit_add_imm(RSP, arg_stack_size + 8);
+                
+                // pop RAX
+                //emit_dry_pop_safe();
+                
+                // push return val
+                if (type_is_float(callee_return_type))
+                    emit_xmm_push_safe(XMM0, 8);
+                else if (!type_is_void(callee_return_type))
+                    emit_push_safe(RAX);
+                
+                // push return val type
+                Value * value = new_value(callee_return_type);
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
+                
+                //assert(("TODO: FUNCARGS", 0));
+            } break;
+            case ARRAYINDEX:
+            {
+                assert(("TODO: ARRAYINDEX", 0));
+            } break;
+            case INDIRECTION:
+            {
+                assert(("TODO: INDIRECTION", 0));
+            } break;
+            default:
+                printf("unhandled code RHUNEXPR node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
+                assert(0);
+            }
+            i += 1;
+            next = nth_child(ast, i);
+        }
+        printf("after %zu\n", stack_offset);
+    } break;
+    case STATEMENT:
+    {
+        puts("compiling statement.....");
+        ptrdiff_t offs = stack_offset;
+        compile_code(ast->first_child, 0);
+        printf("%zu %zu\n", offs, stack_offset);
+        if (offs < stack_offset)
+        {
+            puts("realigning stack...");
+            stack_pop();
+            emit_dry_pop_safe();
+        }
+        else if (offs > stack_offset)
+        {
+            assert(("horrible stack desync!!!!!", 0));
+        }
+        assert(("stack desync!", offs == stack_offset));
+    } break;
+    case STATEMENTLIST:
+    {
+        Node * statement = ast->first_child;
+        if (statement)
+        {
+            enscope_locals();
+            while (statement)
+            {
+                compile_code(statement, 0);
+                statement = statement->next_sibling;
+            }
+            unscope_locals();
+        }
+    } break;
     case DECLARATION:
     case FULLDECLARATION:
     {
-        printf("%lld\n", stack_offset);
+        printf("%zu\n", stack_offset);
         assert(stack_offset == 0);
         
         Type * type = parse_type(nth_child(ast, 0));
@@ -1572,12 +1887,11 @@ void compile_code(Node * ast, int want_ptr)
         printf("declaring local %s...\n", name_text);
         
         size_t align = guess_alignment_from_size(type->size);
-        uint64_t old_loc = stack_loc;
         stack_loc += type->size;
         while (stack_loc % align)
             stack_loc++;
         
-        emit_sub_imm(RSP, stack_loc - old_loc);
+        //emit_sub_imm(RSP, stack_loc - old_loc);
         
         Variable * var = add_local(name_text, type);
         var->val->kind = VAL_STACK_BOTTOM;
@@ -1591,12 +1905,9 @@ void compile_code(Node * ast, int want_ptr)
             Value * expr = stack_pop()->val;
             
             _push_small_if_const(expr);
-            emit_pop_safe(RDX); // value into RDX
             
-            // destination location into RAX
-            emit_lea(RAX, RBP, -var->val->loc);
-            
-            emit_mov_preg_reg(RAX, RDX, expr->type->size);
+            emit_pop_safe(RAX); // value into RDX
+            emit_mov_into_offset(RBP, -var->val->loc, RAX, expr->type->size);
             
             assert(stack_offset == 0);
         }
@@ -1874,24 +2185,9 @@ void compile_code(Node * ast, int want_ptr)
             assert(("TODO: unsupported cast type pair", 0));
         }
     } break;
-    case STATEMENT:
     case PARENEXPR:
     {
         compile_code(ast->first_child, 0);
-    } break;
-    case STATEMENTLIST:
-    {
-        Node * statement = ast->first_child;
-        if (statement)
-        {
-            enscope_locals();
-            while (statement)
-            {
-                compile_code(statement, 0);
-                statement = statement->next_sibling;
-            }
-            unscope_locals();
-        }
     } break;
     case INTEGER:
     {
@@ -2077,7 +2373,7 @@ void compile_code(Node * ast, int want_ptr)
         }
     } break;
     default:
-        printf("unhandled code AST node type %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
+        printf("unhandled code AST node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
         assert(0);
     }
 }
@@ -2121,7 +2417,8 @@ void compile_defs_compile(Node * ast)
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
-        emit_sub_imm(RSP, stack_loc);
+        emit_sub_imm32(RSP, stack_loc);
+        log_stack_size_usage(code->len - 4);
         
         // emit code to assign arguments into local stack slots
         abi_reset_state();
@@ -2163,11 +2460,14 @@ void compile_defs_compile(Node * ast)
         // ensure termination
         assert(last_is_terminator);
         
+        // fix up stack size usages
+        do_fix_stack_size_usages(stack_loc);
         // fix up jumps
         do_fix_jumps();
         
         /*
-        emit_add_imm(RSP, stack_loc);
+        emit_add_imm32(RSP, stack_loc);
+        log_stack_size_usage(code->len - 4);
         emit_pop(RBP);
         emit_ret();
         */
@@ -2289,7 +2589,11 @@ void compile(Node * ast)
         add_visible_function(funcdef, code->len);
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
-        emit_sub_imm(RSP, stack_loc);
+        
+        stack_loc = 0;
+        emit_sub_imm32(RSP, stack_loc);
+        
+        log_stack_size_usage(code->len - 4);
         
         next = ast->first_child;
         while (next)
@@ -2298,10 +2602,13 @@ void compile(Node * ast)
             next = next->next_sibling;
         }
         
-        emit_add_imm(RSP, stack_loc);
+        assert(stack_loc >= 0);
+        emit_add_imm32(RSP, stack_loc);
+        log_stack_size_usage(code->len - 4);
         emit_pop(RBP);
         emit_ret();
         
+        do_fix_stack_size_usages(stack_loc);
         do_fix_jumps();
         
         // compile individual function definitions
@@ -2313,16 +2620,16 @@ void compile(Node * ast)
         }
     } break;
     default:
-        printf("unhandled zeroth-level AST node type %d (line %lld column %lld)\n", ast->type, ast->line, ast->column);
+        printf("unhandled zeroth-level AST node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
         assert(0);
     }
 }
 
 int compile_program(Node * ast, byte_buffer ** ret_code)
 {
-    code = (byte_buffer *)zalloc(sizeof(byte_buffer));
-    static_data = (byte_buffer *)zalloc(sizeof(byte_buffer));
-    global_data = (byte_buffer *)zalloc(sizeof(byte_buffer));
+    code = (byte_buffer *)zero_alloc(sizeof(byte_buffer));
+    static_data = (byte_buffer *)zero_alloc(sizeof(byte_buffer));
+    global_data = (byte_buffer *)zero_alloc(sizeof(byte_buffer));
     
     add_primitive_type("u8", PRIM_U8);
     add_primitive_type("u16", PRIM_U16);
@@ -2338,10 +2645,22 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
     add_primitive_type("f64", PRIM_F64);
     add_primitive_type("void", PRIM_VOID);
     
+    GenericList * info = funcimports;
+    while (info)
+    {
+        char * name = (char *)(((uint64_t *)(info->item))[0]);
+        char * sigtext = (char *)(((uint64_t *)(info->item))[1]);
+        void * ptr = (void *)(((uint64_t *)(info->item))[2]);
+        
+        add_funcimport(name, sigtext,ptr);
+        
+        info = info->next;
+    }
+    
     compile(ast);
     
     *ret_code = code;
     return 0;
 }
 
-#undef zalloc
+#undef zero_alloc

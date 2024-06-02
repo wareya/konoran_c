@@ -1,3 +1,10 @@
+
+#ifndef _WIN32
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -7,6 +14,11 @@
 #include "parser.c"
 #include "compiler.c"
 #include "jitify.c"
+
+void print_float(double x)
+{
+    printf("%f\n", x);
+}
 
 int main(int argc, char ** argv)
 {
@@ -33,7 +45,7 @@ int main(int argc, char ** argv)
     Token * tokens = tokenize(buffer, &failed_last);
     if (failed_last)
     {
-        printf("tokenizer failed! got to line %lld column %lld\n", failed_last->line, failed_last->column + failed_last->len);
+        printf("tokenizer failed! got to line %zd column %zd\n", failed_last->line, failed_last->column + failed_last->len);
     }
     
     Token * unparsed_tokens = 0;
@@ -42,8 +54,8 @@ int main(int argc, char ** argv)
         puts("no parse");
     else if (unparsed_tokens)
     {
-        printf("unfinished parse; good parse section ended at line %lld column %lld\n", unparsed_tokens->line, unparsed_tokens->column);
-        printf("(got to line %lld column %lld)\n", furthest_ever_parse_line, furthest_ever_parse_column);
+        printf("unfinished parse; good parse section ended at line %zd column %zd\n", unparsed_tokens->line, unparsed_tokens->column);
+        printf("(got to line %zd column %zd)\n", furthest_ever_parse_line, furthest_ever_parse_column);
         
         Token * asdf = furthest_ever_parse_token;
         int i = 16;
@@ -57,10 +69,13 @@ int main(int argc, char ** argv)
     }
     else
     {
-        printf("finished parse! %lld\n", (uint64_t)root);
-        byte_buffer * code = 0;
-        byte_buffer * static_data = 0;
-        size_t global_data_len = 0;
+        printf("finished parse! %zd\n", (uint64_t)root);
+        code = 0;
+        static_data = 0;
+        global_data = 0;
+        
+        register_funcimport("print_float", "funcptr(void, (f64))", (void *)print_float);
+        
         compile_program(root, &code);
     }
     puts("compiled!!!");
@@ -78,23 +93,29 @@ int main(int argc, char ** argv)
     assert(funcinfo_main);
     
     int64_t asdf = 91543;
-    printf("%lld\n", asdf);
-    printf("%llu\n", asdf);
-
+    printf("%zd\n", asdf);
+    printf("%zu\n", asdf);
+    
 // suppress wrong/non-posix GCC warning
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
     void (*jit_startup) (void) = (void(*)(void))(void *)(jit_code + funcinfo_startup->offset);
-    int64_t (*jit_main) (int) = (int64_t(*)(int))(void *)(jit_code + funcinfo_main->offset);
+    //int64_t (*jit_main) (int) = (int64_t(*)(int))(void *)(jit_code + funcinfo_main->offset);
+    void (*jit_main) (void) = (void(*)(void))(void *)(jit_code + funcinfo_main->offset);
 #pragma GCC diagnostic pop
     
+    printf("jit_code: %zX\n", (uint64_t)jit_code);
+    printf("jit_startup: %zX\n", (uint64_t)jit_startup);
+    assert(jit_startup);
     jit_startup();
-    asdf = jit_main(152);
+    //asdf = jit_main(152);
     //asdf = jit_main(0);
+    assert(jit_main);
+    jit_main();
     
-    printf("%lld\n", asdf);
-    printf("%llu\n", asdf);
-    printf("%llX\n", asdf);
+    printf("%zd\n", asdf);
+    printf("%zu\n", asdf);
+    printf("%zX\n", asdf);
     puts("whee!");
     
     free_as_executable(jit_code);
