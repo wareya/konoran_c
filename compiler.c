@@ -73,6 +73,20 @@ int strcmp_len(const char * a, const char * b, size_t len)
         return 1;
     return 0;
 }
+// Returns a pointer to a buffer with N+1 bytes reserved, and at least one null terminator.
+char * strcpy_len(char * str, size_t len)
+{
+    if (!str)
+        return (char *)zero_alloc(1);
+    char * ret = (char *)zero_alloc(len + 1);
+    assert(ret);
+    char * ret_copy = ret;
+    char c = 0;
+    while ((c = *str++) && len-- > 0)
+        *ret_copy++ = c;
+    return ret;
+}
+
 
 size_t guess_alignment_from_size(size_t size)
 {
@@ -256,24 +270,7 @@ Type * make_funcptr_type(struct _FuncDef * funcdef)
     return outer;
 }
 
-Type * parse_type(Node * ast)
-{
-    if (!ast)
-    {
-        puts("broken type AST?");
-        assert(0);
-    }
-    if (ast->type == TYPE)
-        return parse_type(ast->first_child);
-    if (ast->type == FUNDAMENTAL_TYPE)
-        return get_type_from_ast(ast);
-        //return get_type_from_ast(ast->first_child ? ast->first_child : ast);
-        //return get_type_from_ast(ast->first_child);
-    if (ast->type == PTR_TYPE)
-        return make_ptr_type(parse_type(ast->first_child));
-    printf("TODO: parse type variant %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
-    assert(0);
-}
+Type * parse_type(Node * ast);
 
 Type * type_list = 0;
 
@@ -465,21 +462,6 @@ uint64_t push_global_data(uint8_t * data, size_t len)
 {
     return push_data_to(data, len, global_data);
 }
-
-// Returns a pointer to a buffer with N+1 bytes reserved, and at least one null terminator.
-char * strcpy_len(char * str, size_t len)
-{
-    if (!str)
-        return (char *)zero_alloc(1);
-    char * ret = (char *)zero_alloc(len + 1);
-    assert(ret);
-    char * ret_copy = ret;
-    char c = 0;
-    while ((c = *str++) && len-- > 0)
-        *ret_copy++ = c;
-    return ret;
-}
-
 typedef struct _StackItem
 {
     Value * val;
@@ -532,6 +514,55 @@ typedef struct _FuncDef
     uint8_t is_import; // if true, code_offset is a raw function pointer
     struct _FuncDef * next;
 } FuncDef;
+
+Type * parse_type(Node * ast)
+{
+    if (!ast)
+    {
+        puts("broken type AST?");
+        assert(0);
+    }
+    if (ast->type == TYPE)
+        return parse_type(ast->first_child);
+    if (ast->type == FUNDAMENTAL_TYPE)
+        return get_type_from_ast(ast);
+    if (ast->type == PTR_TYPE)
+        return make_ptr_type(parse_type(ast->first_child));
+    /*
+    if (ast->type == FUNCPTR_TYPE)
+    {
+        Type * return_type = parse_type(nth_child(ast, 0));
+        GenericList * signature = 0;
+        GenericList * arg_names = 0;
+        list_add(&signature, return_type);
+        
+        Node * arg = nth_child(ast, 1)->first_child;
+        uint64_t num_args = 0;
+        while (arg)
+        {
+            Type * type = parse_type(arg->first_child);
+            assert(arg->first_child);
+            assert(type);
+            list_add(&signature, type);
+            char * arg_name = strcpy_len(nth_child(arg, 0)->text, nth_child(arg, 0)->textlen);
+            //printf("%s\n", arg_name);
+            list_add(&arg_names, arg_name);
+            arg = arg->next_sibling;
+            num_args++;
+        }
+        
+        FuncDef * funcdef = (FuncDef *)zero_alloc(sizeof(FuncDef));
+        funcdef->arg_names = arg_names;
+        funcdef->signature = signature;
+        funcdef->num_args = num_args;
+        funcdef->is_import = 1;
+        
+        return make_funcptr_type(funcdef);
+    }
+    */
+    printf("TODO: parse type variant %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
+    assert(0);
+}
 
 GenericList * visible_funcs = 0;
 
@@ -1758,6 +1789,7 @@ void compile_code(Node * ast, int want_ptr)
             case FUNCARGS:
             {
                 size_t stack_offset_at_funcptr = stack_offset;
+                printf("--- stack offset is %zd\n", stack_offset_at_funcptr);
                 //emit_pop_safe(RAX);
                 
                 Value * expr = stack_pop()->val;
@@ -1797,9 +1829,9 @@ void compile_code(Node * ast, int want_ptr)
                 arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
                 
                 // stack must be aligned to 16 bytes before call, with arguments on the "top" end (leftwards)
-                while ((arg_stack_size + stack_offset_at_funcptr) % 16)
+                // FIXME this should involve stack_offset_at_funcptr somehow, but it doesn't...?
+                while ((arg_stack_size + 8) % 16)
                     arg_stack_size++;
-                
                 
                 printf("stack size after %zd\n", arg_stack_size);
                 emit_sub_imm(RSP, arg_stack_size);
@@ -1841,22 +1873,24 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 assert(("too many args to function", !arg_node));
                 
-                /*
-                    char * name;
-                    GenericList * arg_names;
-                    GenericList * signature;
-                    size_t num_args;
-                    char * vismod;
-                    uint64_t code_offset; // only added when the function's body is compiled, 0 otherwise
-                    uint8_t is_import; // if true, code_offset is a raw function pointer
-                    struct _FuncDef * next;
-                */
+                //#define DO_CALL_STACK_VERIFY_AT_RUNTIME
+                #ifdef DO_CALL_STACK_VERIFY_AT_RUNTIME
+                emit_mov(RAX, RSP, 8);
+                emit_shl_imm(RAX, 4, 1);
+                emit_test(RAX, RAX, 1);
+                // == 0
+                emit_jmp_cond_short(0, label_anon_num, J_EQ);
+                emit_breakpoint();
+                emit_label(0, label_anon_num);
+                label_anon_num += 1;
+                #endif
                 
                 emit_mov_offset(RAX, RSP, arg_stack_size, 8);
                 emit_call(RAX);
                 
                 emit_add_imm(RSP, arg_stack_size);
-                // pop RAX
+                
+                // pop function address
                 emit_dry_pop_safe();
                 
                 // push return val

@@ -15,13 +15,30 @@
 #include "compiler.c"
 #include "jitify.c"
 
+__attribute__((noinline))
 void print_float(double x)
 {
     printf("%f\n", x);
 }
 
+__attribute__((noinline))
+int crash_if_misaligned(int x)
+{
+    // MOVDQA depends on the given pointer, rbp in this case, being 16-byte aligned
+    //asm volatile(
+    __asm__ volatile(
+        ".intel_syntax noprefix \n" \
+        "MOVAPD XMM0, [rbp] \n" \
+        ".att_syntax \n"
+    );
+    return 0;
+}
+
 int main(int argc, char ** argv)
 {
+    crash_if_misaligned(1234);
+    print_float(1234.13);
+    
     if (argc < 2)
         return puts("please supply filename"), 0;
     char * buffer = 0;
@@ -78,7 +95,12 @@ int main(int argc, char ** argv)
         static_data = 0;
         global_data = 0;
         
+// suppress wrong/non-posix GCC warning
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
         register_funcimport("print_float", "funcptr(void, (f64))", (void *)print_float);
+        register_funcimport("crash_if_misaligned", "funcptr(i32, (i32))", (void *)crash_if_misaligned);
+#pragma GCC diagnostic pop
         
         compile_program(root, &code);
     }

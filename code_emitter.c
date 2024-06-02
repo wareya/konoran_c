@@ -88,13 +88,13 @@ void clear_jump_log(void)
     {
         Label * f = jumps_to_rewrite;
         jumps_to_rewrite = jumps_to_rewrite->next;
-        free(jumps_to_rewrite);
+        free(f);
     }
     while (labels)
     {
         Label * f = labels;
         labels = labels->next;
-        free(labels);
+        free(f);
     }
 }
 
