@@ -46,12 +46,16 @@ int main(int argc, char ** argv)
     if (failed_last)
     {
         printf("tokenizer failed! got to line %zd column %zd\n", failed_last->line, failed_last->column + failed_last->len);
+        return -1;
     }
     
     Token * unparsed_tokens = 0;
     Node * root = parse_as(tokens, PROGRAM, &unparsed_tokens);
     if (!root)
+    {
         puts("no parse");
+        return -1;
+    }
     else if (unparsed_tokens)
     {
         printf("unfinished parse; good parse section ended at line %zd column %zd\n", unparsed_tokens->line, unparsed_tokens->column);
@@ -104,6 +108,8 @@ int main(int argc, char ** argv)
     void (*jit_main) (void) = (void(*)(void))(void *)(jit_code + funcinfo_main->offset);
 #pragma GCC diagnostic pop
     
+    printf("print_float: %zX\n", (uint64_t)print_float);
+    
     printf("jit_code: %zX\n", (uint64_t)jit_code);
     printf("jit_startup: %zX\n", (uint64_t)jit_startup);
     assert(jit_startup);
@@ -119,6 +125,12 @@ int main(int argc, char ** argv)
     puts("whee!");
     
     free_as_executable(jit_code);
+    
+    free_compiler_buffers();
+    free_all_compiler_allocs();
+    
+    free_node(&root);
+    free_tokens_from_front(tokens);
     
     puts("exiting peacefully...");
 }

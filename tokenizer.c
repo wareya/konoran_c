@@ -334,6 +334,15 @@ void free_tokens_from_end(Token * token)
         free(tofree);
     }
 }
+void free_tokens_from_front(Token * token)
+{
+    while (token)
+    {
+        Token * tofree = token;
+        token = token->next;
+        free(tofree);
+    }
+}
 
 void print_token(Token * token)
 {

@@ -8,17 +8,58 @@ byte_buffer * code = 0;
 byte_buffer * static_data = 0;
 byte_buffer * global_data = 0;
 
+void free_compiler_buffers(void)
+{
+    if (code && code->data)
+        free(code->data);
+    if (static_data && static_data->data)
+        free(static_data->data);
+    if (global_data && global_data->data)
+        free(global_data->data);
+    code = static_data = global_data = 0;
+}
+
 #include "code_emitter.c"
 
 #include "abi_handler.h"
 
+union KonoranCMaxAlignT {
+    int a;
+    long b;
+    long * c;
+    long long d;
+    void * e;
+    void (*f)(void);
+    long double (*g)(long double, long double);
+    long double h;
+};
+
+void * alloc_list = 0;
 void * zero_alloc(size_t n)
 {
-    void * ret = calloc(1, n);
-    //void * ret = malloc(n);
-    //if (ret)
-    //    memset(ret, 0, n);
+    size_t align = sizeof(union KonoranCMaxAlignT);
+    if (align < sizeof(uint8_t *))
+        align = sizeof(uint8_t *);
+    
+    n += align;
+    uint8_t * alloc = (uint8_t *)calloc(1, n);
+    assert(alloc);
+    
+    uint8_t ** alloc_next = (uint8_t **)alloc;
+    *alloc_next = alloc_list;
+    
+    alloc_list = alloc;
+    uint8_t * ret = alloc + align;
     return ret;
+}
+void free_all_compiler_allocs(void)
+{
+    while (alloc_list)
+    {
+        uint8_t * alloc_next = *(uint8_t **)alloc_list;
+        free(alloc_list);
+        alloc_list = alloc_next;
+    }
 }
 
 // strncmp but checks len of left string
@@ -592,6 +633,9 @@ void add_funcimport(char * name, char * sigtext, void * ptr)
         arg = arg->next_sibling;
         num_args++;
     }
+    
+    free_node(&ast);
+    free_tokens_from_front(tokens);
     
     FuncDef * funcdef = add_funcdef(name);
     funcdef->arg_names = arg_names;
@@ -1753,25 +1797,28 @@ void compile_code(Node * ast, int want_ptr)
                 arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
                 
                 // stack must be aligned to 16 bytes before call, with arguments on the "top" end (leftwards)
-                while (arg_stack_size % 16)
+                while ((arg_stack_size + stack_offset_at_funcptr) % 16)
                     arg_stack_size++;
                 
                 
                 printf("stack size after %zd\n", arg_stack_size);
-                emit_sub_imm(RSP, arg_stack_size + 8);
+                emit_sub_imm(RSP, arg_stack_size);
                 
                 abi_reset_state();
                 arg = funcdef->signature->next;
-                Node * arg_node = next->first_child->first_child;
+                Node * arg_node = next->first_child ? next->first_child->first_child : 0;
                 while (arg)
                 {
                     assert(("too few args to function", arg_node));
                     Type * type = arg->item;
                     
                     //compile_code(nth_child(node, 0), WANT_PTR_VIRTUAL);
-                    compile_code(arg_node, WANT_PTR_VIRTUAL);
-                    Value * arg_expr = stack_pop()->val;
+                    compile_code(arg_node, 0);
+                    StackItem * item = stack_pop();
+                    assert(item);
+                    Value * arg_expr = item->val;
                     assert(arg_expr->type == type);
+                    _push_small_if_const(arg_expr);
                     
                     int64_t where = abi_get_next(type_is_float(type));
                     if (where >= 0)
@@ -1808,10 +1855,9 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_offset(RAX, RSP, arg_stack_size, 8);
                 emit_call(RAX);
                 
-                emit_add_imm(RSP, arg_stack_size + 8);
-                
+                emit_add_imm(RSP, arg_stack_size);
                 // pop RAX
-                //emit_dry_pop_safe();
+                emit_dry_pop_safe();
                 
                 // push return val
                 if (type_is_float(callee_return_type))

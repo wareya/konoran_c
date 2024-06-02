@@ -1,8 +1,5 @@
 void main()
 {
-	print_float(19512.15f64);
-	
-	/*
 	print_float((1.8f32 / 4.0f32) as f64);
 	print_float((2.2f32 / 4.0f32) as f64);
 	print_float((4.2f32 / 4.0f32) as f64);
@@ -10,6 +7,5 @@ void main()
 	print_float((-0.2f32 / -4.0f32) as f64);
 	print_float(( 0.2f32 / -4.0f32) as f64);
 	print_float(( 0.2f32 /  4.0f32) as f64);
-	*/
 	return;
 }
