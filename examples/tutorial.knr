@@ -1,7 +1,5 @@
 i32 main(i32 argc, ptr(ptr(u8)) argv)
 {
-    print_float((argc) as f64);
-    
     if (argc <= 1i32)
     {
         return -1i32;

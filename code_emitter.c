@@ -131,7 +131,11 @@ void do_fix_jumps(void)
             }
             label = label->next;
         }
-        assert(matching_label_found);
+        if (!matching_label_found)
+        {
+            printf("culprit: %s (%zu)\n", jump->name, jump->num);
+            assert(("failed to find matching label for jump", 0));
+        }
         jump = jump->next;
     }
     clear_jump_log();
@@ -1157,6 +1161,21 @@ void emit_mov_imm(int reg, uint64_t val, size_t size)
     byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
     bytes_push_int(code, (uint64_t)val, size);
 }
+void emit_lea_rip_offset(int reg, int64_t offset)
+{
+    assert(offset >= -2147483648 && offset <= 2147483647);
+    
+    last_is_terminator = 0;
+    size_t size = 8;
+    EMIT_LEN_PREFIX(0, reg);
+    
+    reg &= 7;
+    
+    byte_push(code, 0x8D);
+    byte_push(code, 0x05 | (reg << 3));
+    bytes_push_int(code, (uint64_t)offset, 4);
+}
+
 void emit_push_val(int64_t val)
 {
     last_is_terminator = 0;

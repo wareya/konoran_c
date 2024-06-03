@@ -23,7 +23,8 @@ void free_compiler_buffers(void)
 
 #include "abi_handler.h"
 
-union KonoranCMaxAlignT {
+union KonoranCMaxAlignT
+{
     int a;
     long b;
     long * c;
@@ -150,12 +151,20 @@ void log_global_relocation(uint64_t loc, uint64_t val)
     GenericList * last = list_add(&global_relocs, (void *)loc);
     last->payload = val;
 }
+// 32-bit RIP-relative symbol addresses
+GenericList * symbol_relocs = 0;
+void log_symbol_relocation(uint64_t loc, char * symbol_name)
+{
+    GenericList * last = list_add(&symbol_relocs, symbol_name);
+    last->payload = loc;
+}
 GenericList * stack_size_usage = 0;
 void log_stack_size_usage(uint64_t loc)
 {
     GenericList * last = list_add(&stack_size_usage, 0);
     last->payload = loc;
 }
+
 void do_fix_stack_size_usages(uint32_t stack_size)
 {
     // align to 16 bytes to simplify function calls
@@ -175,8 +184,18 @@ typedef struct _StructData
 {
     char * name;
     struct _Type * type;
+    size_t offset;
+    // next var, or 0 if none
     struct _StructData * next;
 } StructData;
+
+StructData * new_structdata(char * name, struct _Type * type)
+{
+    StructData * data = (StructData *)zero_alloc(sizeof(StructData));
+    data->name = name;
+    data->type = type;
+    return data;
+}
 
 
 enum { // type primitive data
@@ -205,7 +224,7 @@ enum { // type variant
 typedef struct _Type
 {
     char * name;
-    size_t size; // for all
+    ptrdiff_t size; // for all
     int variant; // for all
     
     int primitive_type; // for primitives
@@ -218,16 +237,6 @@ typedef struct _Type
 } Type;
 Type * get_type_from_ast(Node * node);
 Type * get_type(char * name);
-
-uint8_t types_same(Type * a, Type * b)
-{
-    if (a == b)
-        return 1;
-    if (a->size != b->size || a->variant != b->variant || a->primitive_type != b->primitive_type || strcmp(a->name, b->name) != 0)
-        return 0;
-    puts("TODO compare types");
-    assert(0);
-}
 
 uint8_t type_is_void(Type * type)
 {
@@ -249,6 +258,26 @@ uint8_t type_is_pointer(Type * type)
 {
     return type->variant == TYPE_POINTER;
 }
+uint8_t type_is_struct(Type * type)
+{
+    return type->variant == TYPE_STRUCT;
+}
+uint8_t type_is_array(Type * type)
+{
+    return type->variant == TYPE_ARRAY;
+}
+
+uint8_t types_same(Type * a, Type * b)
+{
+    if (a == b)
+        return 1;
+    if (a->size != b->size || a->variant != b->variant || a->primitive_type != b->primitive_type || strcmp(a->name, b->name) != 0)
+        return 0;
+    if (type_is_pointer(a) && type_is_pointer(b))
+        return a->inner_type == b->inner_type;
+    puts("TODO compare types");
+    assert(0);
+}
 
 Type * new_type(char * name, int variant)
 {
@@ -268,9 +297,30 @@ Type * make_ptr_type(Type * inner)
 
 Type * make_funcptr_type(struct _FuncDef * funcdef)
 {
-    Type * outer = new_type("funcptr", TYPE_FUNCPOINTER);
-    outer->funcdef = funcdef;
-    outer->size = 8;
+    Type * type = new_type("funcptr", TYPE_FUNCPOINTER);
+    type->funcdef = funcdef;
+    type->size = 8;
+    return type;
+}
+
+Type * make_struct_type(char * name)
+{
+    Type * type = new_type(name, TYPE_STRUCT);
+    return type;
+}
+
+// size may need to be fixed later (e.g. array types in function definitions that reference structs)
+GenericList * array_types = 0;
+Type * make_array_type(Type * inner, uint64_t count)
+{
+    Type * outer = new_type("array", TYPE_ARRAY);
+    outer->inner_type = inner;
+    outer->inner_count = count;
+    outer->size = inner->size * count;
+    
+    list_add(&array_types, outer);
+    
+    assert(("size overflow!!!", ((size_t)outer->size / count == (size_t)inner->size)));
     return outer;
 }
 
@@ -532,7 +582,29 @@ Type * parse_type(Node * ast)
         return get_type_from_ast(ast);
     if (ast->type == PTR_TYPE)
         return make_ptr_type(parse_type(ast->first_child));
-    /*
+    if (ast->type == STRUCT_TYPE)
+    {
+        ast = ast->first_child;
+        Type * ret = get_type_from_ast(ast);
+        if (!ret)
+        {
+            char * s = strcpy_len(ast->text, ast->textlen);
+            printf("culprit: '%s'\n", s);
+            assert(("unknown struct type", 0));
+        }
+        return ret;
+    }
+    if (ast->type == ARRAY_TYPE)
+    {
+        Type * inner_type = parse_type(nth_child(ast, 0));
+        Node * count_node = nth_child(ast, 1);
+        char * s = strcpy_len(count_node->text, count_node->textlen);
+        char * _dummy = 0;
+        uint64_t count = strtoull(s, &_dummy, 10);
+        assert(("Arrays must have at least one element!", (count > 0)));
+        
+        return make_array_type(inner_type, count);
+    }
     if (ast->type == FUNCPTR_TYPE)
     {
         Type * return_type = parse_type(nth_child(ast, 0));
@@ -563,7 +635,6 @@ Type * parse_type(Node * ast)
         
         return make_funcptr_type(funcdef);
     }
-    */
     printf("TODO: parse type variant %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
     assert(0);
 }
@@ -699,7 +770,6 @@ void compile_defs_collect(Node * ast)
         
         Node * name = nth_child(ast, 2);
         char * name_text = strcpy_len(name->text, name->textlen);
-        
         Node * arg = nth_child(ast, 3)->first_child;
         uint64_t num_args = 0;
         while (arg)
@@ -723,8 +793,47 @@ void compile_defs_collect(Node * ast)
     } break;
     case STRUCTDEF:
     {
-        puts("TODO STRUCTDEF");
-        assert(0);
+        Node * name = nth_child(ast, 0);
+        char * name_text = strcpy_len(name->text, name->textlen);
+        
+        Type * struct_type = make_struct_type(name_text);
+        add_type(struct_type);
+        // info filled in mid-compilation; need to add it this early for pointerse etc
+        
+        StructData * first_data = 0;
+        StructData * last_data = 0;
+        
+        Node * prop = nth_child(ast, 1)->first_child;
+        while (prop)
+        {
+            Type * type = parse_type(nth_child(prop, 0));
+            
+            if (types_same(type, struct_type))
+                assert(("recursive structs are forbidden", 0));
+            
+            Node * name = nth_child(prop, 1);
+            char * name_text = strcpy_len(name->text, name->textlen);
+            
+            StructData * data = new_structdata(name_text, type);
+            if (!first_data)
+            {
+                first_data = data;
+                last_data = data;
+            }
+            else
+            {
+                last_data->next = data;
+                last_data = data;
+            }
+            
+            prop = prop->next_sibling;
+        }
+        assert(first_data);
+        assert(last_data);
+        // size is filled out later once all structs are defined
+        // this is necessary to be able to detect and reject indirectly recursive structs properly
+        
+        struct_type->struct_data = first_data;
     } break;
     default: {}
     }
@@ -818,38 +927,38 @@ enum {
 
 void emit_push_safe(int reg1)
 {
-    puts("emitting base reg push...");
+    //puts("emitting base reg push...");
     emit_push(reg1);
     stack_offset += 8;
 }
 void emit_pop_safe(int reg1)
 {
-    puts("emitting base reg pop...");
+    //puts("emitting base reg pop...");
     emit_pop(reg1);
     stack_offset -= 8;
 }
 void emit_dry_pop_safe(void)
 {
-    puts("emitting base reg pop...");
+    //puts("emitting base reg pop...");
     emit_add_imm(RSP, 8);
     stack_offset -= 8;
 }
 void emit_push_val_safe(uint64_t val)
 {
-    puts("emitting val push...");
+    //puts("emitting val push...");
     emit_push_val(val);
     stack_offset += 8;
 }
 
 void emit_xmm_push_safe(int reg1, int size)
 {
-    puts("emitting XMM push...");
+    //puts("emitting XMM push...");
     emit_xmm_push(reg1, size);
     stack_offset += 8;
 }
 void emit_xmm_pop_safe(int reg1, int size)
 {
-    puts("emitting XMM pop...");
+    //puts("emitting XMM pop...");
     emit_xmm_pop(reg1, size);
     stack_offset -= 8;
 }
@@ -1638,7 +1747,7 @@ void compile_code(Node * ast, int want_ptr)
         else
         {
             _push_small_if_const(expr->val);
-            assert(return_type == expr->val->type);
+            assert(types_same(return_type, expr->val->type));
             assert(return_type->size <= 8);
             if (type_is_float(expr->val->type))
                 emit_xmm_pop_safe(XMM0, 8);
@@ -1675,54 +1784,61 @@ void compile_code(Node * ast, int want_ptr)
         {
             Type * type = var->val->type;
             
-            if (var->val->kind == VAL_STACK_BOTTOM)
+            assert(var->val->kind == VAL_STACK_BOTTOM);
+            
+            if (want_ptr != 0)
             {
-                if (want_ptr != 0)
-                {
-                    type = make_ptr_type(type);
-                    emit_lea(RAX, RBP, -var->val->loc);
-                    puts("emitting LEA...");
-                    
-                    emit_push_safe(RAX);
-                    Value * value = new_value(type);
-                    value->kind = VAL_STACK_TOP;
-                    stack_push_new(value);
-                }
-                else
-                {
-                    // FIXME aggregates
-                    assert(var->val->type->size <= 8);
-                    
-                    emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
-                    
-                    printf("emitting mov with offset of %zu...\n", -var->val->loc);
-                    emit_push_safe(RAX);
-                    Value * value = new_value(type);
-                    value->kind = VAL_STACK_TOP;
-                    stack_push_new(value);
-                }
+                type = make_ptr_type(type);
+                emit_lea(RAX, RBP, -var->val->loc);
+                puts("emitting LEA...");
+                
+                emit_push_safe(RAX);
+                Value * value = new_value(make_ptr_type(type));
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
             }
             else
-                assert(("FIXME/TODO non-stack rvars", 0));
+            {
+                // FIXME aggregates
+                assert(var->val->type->size <= 8);
+                
+                emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
+                
+                printf("emitting mov with offset of %zu...\n", -var->val->loc);
+                emit_push_safe(RAX);
+                Value * value = new_value(type);
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
+            }
         }
         else if ((var = get_global(ast->text, ast->textlen)))
         {
             // FIXME aggregates
             assert(var->val->type->size <= 8);
             
-            emit_mov_imm(RDX, var->val->loc, 8);
+            emit_mov_imm(RAX, var->val->loc, 8);
             
             if (var->val->kind == VAL_GLOBAL)
                 log_global_relocation(code->len - 8, var->val->loc);
             else if (var->val->kind == VAL_CONSTANT)
                 log_static_relocation(code->len - 8, var->val->loc);
             
-            emit_mov_reg_preg(RAX, RDX, var->val->type->size);
-            emit_push_safe(RAX);
-            
-            Value * value = new_value(var->val->type);
-            value->kind = VAL_STACK_TOP;
-            stack_push_new(value);
+            if (want_ptr == 0)
+            {
+                emit_mov_reg_preg(RAX, RAX, var->val->type->size);
+                emit_push_safe(RAX);
+                
+                Value * value = new_value(var->val->type);
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
+            }
+            else
+            {
+                emit_push_safe(RAX);
+                Value * value = new_value(make_ptr_type(var->val->type));
+                value->kind = VAL_STACK_TOP;
+                stack_push_new(value);
+            }
         }
         else if ((funcdef = get_funcdef(name_text)))
         {
@@ -1730,9 +1846,9 @@ void compile_code(Node * ast, int want_ptr)
                 emit_push_val_safe(funcdef->code_offset);
             else
             {
-                //emit_mov_imm(RAX, funcdef->code_offset, 8);
-                // then log address
-                assert(("TODO: local function pointers", 0));
+                emit_lea_rip_offset(RAX, 0);
+                log_symbol_relocation(code->len - 4, name_text);
+                emit_push_safe(RAX);
             }
             
             Type * type = make_funcptr_type(funcdef);
@@ -1798,7 +1914,7 @@ void compile_code(Node * ast, int want_ptr)
             case FUNCARGS:
             {
                 size_t stack_offset_at_funcptr = stack_offset;
-                printf("--- stack offset is %zd\n", stack_offset_at_funcptr);
+                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset_at_funcptr);
                 //emit_pop_safe(RAX);
                 
                 Value * expr = stack_pop()->val;
@@ -1819,10 +1935,12 @@ void compile_code(Node * ast, int want_ptr)
                 // points to left side of last arg, from the left, from RBP as seen inside callee
                 int64_t arg_stack_size = abi_get_min_stack_size();
                 abi_reset_state();
+                GenericList * argwheres = 0;
                 while (arg)
                 {
-                    Type * type = arg->item;
-                    int64_t where = abi_get_next(type_is_float(type));
+                    int64_t where = abi_get_next(type_is_float(arg->item));
+                    list_add(&argwheres, (void *)where);
+                    
                     if (-where > arg_stack_size)
                         arg_stack_size = -where;
                     
@@ -1833,14 +1951,14 @@ void compile_code(Node * ast, int want_ptr)
                 arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
                 
                 // stack must be aligned to 16 bytes before call, with arguments on the "top" end (leftwards)
-                // FIXME this should involve stack_offset_at_funcptr somehow, but it doesn't...?
-                while ((arg_stack_size + 8) % 16)
+                while ((arg_stack_size + stack_offset_at_funcptr) % 16)
                     arg_stack_size++;
                 
                 printf("stack size after %zd\n", arg_stack_size);
                 emit_sub_imm(RSP, arg_stack_size);
+                stack_offset += arg_stack_size;
                 
-                abi_reset_state();
+                //abi_reset_state();
                 arg = funcdef->signature->next;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
                 while (arg)
@@ -1856,7 +1974,9 @@ void compile_code(Node * ast, int want_ptr)
                     assert(arg_expr->type == type);
                     _push_small_if_const(arg_expr);
                     
-                    int64_t where = abi_get_next(type_is_float(type));
+                    //int64_t where = abi_get_next(type_is_float(type));
+                    int64_t where = (int64_t)argwheres->item;
+                    argwheres = argwheres->next;
                     if (where >= 0)
                     {
                         if (where <= R15)
@@ -1893,6 +2013,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_call(RAX);
                 
                 emit_add_imm(RSP, arg_stack_size);
+                stack_offset -= arg_stack_size;
                 
                 // pop function address
                 emit_dry_pop_safe();
@@ -1956,6 +2077,38 @@ void compile_code(Node * ast, int want_ptr)
             }
             unscope_locals();
         }
+    } break;
+    case CONSTEXPR_FULLDECLARATION:
+    {
+        Type * type = parse_type(nth_child(ast, 0));
+        Node * name = nth_child(ast, 1);
+        char * name_text = strcpy_len(name->text, name->textlen);
+        assert(name_text);
+        printf("name: %s\n", name_text);
+        
+        Node * expr = nth_child(ast, 2);
+        assert(expr);
+        
+        size_t code_start = code->len;
+        compile_code(expr, 0);
+        StackItem * val = stack_pop();
+        assert(val);
+        if (code->len != code_start || val->val->kind != VAL_CONSTANT)
+        {
+            puts("Error: tried to assign non-const value to a global constant");
+            assert(0);
+        }
+        if (val->val->type->size > 8)
+        {
+            puts("TODO: large consts");
+            assert(0);
+        }
+        
+        assert(types_same(type, val->val->type));
+        
+        Variable * var = add_local(name_text, type);
+        var->val->kind = VAL_CONSTANT;
+        var->val->loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
     } break;
     case DECLARATION:
     case FULLDECLARATION:
@@ -2279,6 +2432,7 @@ void compile_code(Node * ast, int want_ptr)
         }
     } break;
     case PARENEXPR:
+    case FREEZE:
     {
         compile_code(ast->first_child, 0);
     } break;
@@ -2586,11 +2740,20 @@ void compile_code(Node * ast, int want_ptr)
         // else block
         if (nth_child(ast, 2))
         {
-            emit_jmp_long(0, label_anon_num + 1);
+            uint8_t second_label_needed = 0;
+            if (!last_is_terminator)
+            {
+                second_label_needed = label_anon_num + 1;
+                emit_jmp_long(0, second_label_needed);
+            }
+            
             emit_label(0, label_anon_num);
-            compile_code(nth_child(ast, 2), 0);
-            emit_label(0, label_anon_num + 1);
             label_anon_num += 2;
+            
+            compile_code(nth_child(ast, 2), 0);
+            
+            if (second_label_needed)
+                emit_label(0, second_label_needed);
         }
         else
         {
@@ -2600,12 +2763,15 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case IFGOTO:
     {
-        compile_code(nth_child(ast, 1), 0);
+        compile_code(nth_child(ast, 0), 0);
         StackItem * val = stack_pop();
         _push_small_if_const(val->val);
         val->val->kind = VAL_STACK_TOP;
         
-        char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
+        Node * label = nth_child(ast, 1);
+        char * text = strcpy_len(label->text, label->textlen);
+        assert(strlen(text) > 0);
+        printf("--------- label '%s'\n", text);
         
         if (type_is_int(val->val->type) || type_is_pointer(val->val->type))
         {
@@ -2624,7 +2790,7 @@ void compile_code(Node * ast, int want_ptr)
 
 void compile_defs_compile(Node * ast)
 {
-    // compile function definitions
+    // compile function definitions/bodies
     switch (ast->type)
     {
     case FUNCDEF:
@@ -2634,9 +2800,11 @@ void compile_defs_compile(Node * ast)
         FuncDef * funcdef = get_funcdef(name_text);
         assert(funcdef);
         
+        funcdef->code_offset = code->len;
         add_visible_function(funcdef, code->len);
         
         stack_loc = 0;
+        local_vars = 0;
         
         return_type = funcdef->signature->item;
         GenericList * arg = funcdef->signature->next;
@@ -2702,6 +2870,7 @@ void compile_defs_compile(Node * ast)
         }
         
         // ensure termination
+        printf("finished compiling function %s\n", name_text);
         assert(last_is_terminator);
         
         // fix up stack size usages
@@ -2808,6 +2977,53 @@ void compile_globals_collect(Node * ast)
     }
 }
 
+void aggregate_type_recalc_size(Type * type)
+{
+    assert(type_is_struct(type) || type_is_array(type));
+    
+    if (type->size > 0) // finished/nonrecursive
+        return;
+    if (type->size < 0) // unfinished/discovered
+        assert(("recursive structs are forbidden", 0));
+    
+    // undiscovered
+    
+    type->size = -1;
+    // now unfinished/discovered
+    
+    if (type_is_struct(type))
+    {
+        size_t offset = 0;
+        StructData * data = type->struct_data;
+        assert(data);
+        
+        while (data)
+        {
+            if (type_is_struct(data->type) || type_is_array(data->type))
+                aggregate_type_recalc_size(data->type);
+            assert(("zero-size struct properties are forbidden", data->type->size));
+            data->offset = offset;
+            offset += data->type->size;
+            data = data->next;
+        }
+        
+        assert(("zero-size structs properties are forbidden", offset));
+        
+        type->size = offset;
+    }
+    else // array
+    {
+        Type * inner = type->inner_type;
+        uint64_t count = type->inner_count;
+        assert(count > 0);
+        
+        if (type_is_struct(inner) || type_is_array(inner))
+            aggregate_type_recalc_size(inner);
+        
+        type->size = inner->size * count;
+    }
+}
+
 void compile(Node * ast)
 {
     switch (ast->type)
@@ -2822,6 +3038,23 @@ void compile(Node * ast)
             next = next->next_sibling;
         }
         
+        // finalize struct sizes
+        Type * type = type_list;
+        while (type)
+        {
+            if (type_is_struct(type) || type_is_array(type))
+                aggregate_type_recalc_size(type);
+            type = type->next_type;
+        }
+        GenericList * array_type = array_types;
+        while (array_type)
+        {
+            Type * type = array_type->item;
+            aggregate_type_recalc_size(type);
+            array_type = array_type->next;
+        }
+        
+        
         // compile initializers (including non-static, hence function prelude/postlude)
         FuncDef * funcdef = add_funcdef("");
         GenericList * signature = 0;
@@ -2835,6 +3068,8 @@ void compile(Node * ast)
         emit_mov(RBP, RSP, 8);
         
         stack_loc = 0;
+        local_vars = 0;
+        
         emit_sub_imm32(RSP, stack_loc);
         
         log_stack_size_usage(code->len - 4);
@@ -2855,7 +3090,7 @@ void compile(Node * ast)
         do_fix_stack_size_usages(stack_loc);
         do_fix_jumps();
         
-        // compile individual function definitions
+        // compile individual function definitions/bodies
         next = ast->first_child;
         while (next)
         {
@@ -2887,6 +3122,7 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
     
     add_primitive_type("f32", PRIM_F32);
     add_primitive_type("f64", PRIM_F64);
+    
     add_primitive_type("void", PRIM_VOID);
     
     GenericList * info = funcimports;
@@ -2896,12 +3132,41 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
         char * sigtext = (char *)(((uint64_t *)(info->item))[1]);
         void * ptr = (void *)(((uint64_t *)(info->item))[2]);
         
-        add_funcimport(name, sigtext,ptr);
+        add_funcimport(name, sigtext, ptr);
         
         info = info->next;
     }
     
     compile(ast);
+    
+    // do relocations
+    GenericList * reloc = symbol_relocs;
+    while (reloc)
+    {
+        uint64_t loc = reloc->payload;
+        char * symbol_name = (char *)reloc->item;
+        
+        FuncDef * funcdef = funcdefs;
+        while (funcdef)
+        {
+            if (strcmp(symbol_name, funcdef->name) == 0)
+                break;
+            funcdef = funcdef->next;
+        }
+        if (!funcdef)
+        {
+            printf("culprit: '%s'\n", symbol_name);
+            assert(("failed to find symbol/function", 0));
+        }
+        uint64_t func_loc = funcdef->code_offset;
+        
+        int64_t diff = func_loc - (loc + 4);
+        assert(diff >= -2147483648 && diff <= 2147483647);
+        
+        memcpy(code->data + loc, &diff, 4);
+        
+        reloc = reloc->next;
+    }
     
     *ret_code = code;
     return 0;
