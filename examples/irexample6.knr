@@ -53,7 +53,7 @@ u8 myfunc_2()
 void main()
 {
     // myfunc_1 runs before myfunc_2
-    //*myfunc_1() = myfunc_2();
+    *myfunc_1() = myfunc_2();
     
     // branching compiler support tests follow
     
@@ -114,7 +114,7 @@ void main()
     {
         print_float(13.14f64);
     }
-    else// if (152u8)
+    else if (152u8)
     {
         print_float(05.5154f64);
     }
