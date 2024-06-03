@@ -127,7 +127,8 @@ int main(int argc, char ** argv)
 #pragma GCC diagnostic ignored "-Wpedantic"
     void (*jit_startup) (void) = (void(*)(void))(void *)(jit_code + funcinfo_startup->offset);
     //int64_t (*jit_main) (int) = (int64_t(*)(int))(void *)(jit_code + funcinfo_main->offset);
-    void (*jit_main) (void) = (void(*)(void))(void *)(jit_code + funcinfo_main->offset);
+    //void (*jit_main) (void) = (void(*)(void))(void *)(jit_code + funcinfo_main->offset);
+    int (*jit_main) (int, char**) = (int(*)(int, char**))(void *)(jit_code + funcinfo_main->offset);
 #pragma GCC diagnostic pop
     
     printf("print_float: %zX\n", (uint64_t)print_float);
@@ -139,7 +140,8 @@ int main(int argc, char ** argv)
     //asdf = jit_main(152);
     //asdf = jit_main(0);
     assert(jit_main);
-    jit_main();
+    //jit_main();
+    jit_main(argc - 1, argv + 1);
     
     printf("%zd\n", asdf);
     printf("%zu\n", asdf);

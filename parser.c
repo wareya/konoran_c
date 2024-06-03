@@ -1129,6 +1129,7 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
             return NULL;
         if (!(does_parse_as_text(tokens, "(", &tokens)))
             return NULL;
+        // here
         if (!(child_1 = parse_as(tokens, TYPE, &tokens)))
             return NULL;
         if (!(does_parse_as_text(tokens, ",", &tokens)))
@@ -1261,6 +1262,7 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         for (size_t i = 0; i < count; i++)
         {
             Node * root = 0;
+            // or here
             if ((root = parse_as_text(tokens, allowed[i], &tokens)))
             {
                 root->type = FUNDAMENTAL_TYPE;
@@ -1286,6 +1288,7 @@ Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)
         if ((child = parse_as(tokens, PTR_TYPE, &tokens)) ||
             (child = parse_as(tokens, FUNCPTR_TYPE, &tokens)) ||
             (child = parse_as(tokens, ARRAY_TYPE, &tokens)) ||
+            // or here
             (child = parse_as(tokens, FUNDAMENTAL_TYPE, &tokens)) ||
             (child = parse_as(tokens, STRUCT_TYPE, &tokens)))
         {

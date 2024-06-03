@@ -245,6 +245,10 @@ uint8_t type_is_float(Type * type)
 {
     return type->primitive_type >= PRIM_F32 && type->primitive_type <= PRIM_F64;
 }
+uint8_t type_is_pointer(Type * type)
+{
+    return type->variant == TYPE_POINTER;
+}
 
 Type * new_type(char * name, int variant)
 {
@@ -887,6 +891,10 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             
             emit_add(RAX, RDX, 8);
             emit_push_safe(RAX);
+            
+            Value * value = new_value(left->val->type);
+            value->kind = VAL_STACK_TOP;
+            stack_push_new(value);
             return;
         }
         else
@@ -1614,6 +1622,7 @@ Type * return_type = 0;
 
 void compile_code(Node * ast, int want_ptr)
 {
+    printf("-- compiling a %d\n", ast->type);
     switch (ast->type)
     {
     case RETURN:
@@ -1801,16 +1810,11 @@ void compile_code(Node * ast, int want_ptr)
                 GenericList * arg = funcdef->signature->next;
                 
                 // TODO: Struct and array arguments need space underneath the arg list,
-                //  because they're passed as pointers to temporary on-stack stoarage,
-                //  but we can't allocate it ahead of time because we might have
-                //  anonymous struct/array storage later on in the arguments list,
-                //  which requires a stack depth of 0 to allocate.
-                // What's worse, stack arguments might be pushed before we get to
-                //  arguments that have address-of-array/struct-value ops in them,
-                //  which are responsible for anonymous struct/array storage.
-                // What do?
-                // Grow the stack normally, then extend it by the automatic storage space
-                //  and memcpy it over itself with an offset?
+                //  because they're passed as pointers to temporary on-stack storage.
+                // We need to somehow allocate this ahead of time, *before* compiling each
+                //  subexpression.
+                // Second copy of stack_loc, tracking the maximum amount of memory needed to
+                //  be passed to functions as pointers...?
                 
                 // points to left side of last arg, from the left, from RBP as seen inside callee
                 int64_t arg_stack_size = abi_get_min_stack_size();
@@ -2009,6 +2013,17 @@ void compile_code(Node * ast, int want_ptr)
         emit_pop_safe(RAX); // destination location into RAX
         
         emit_mov_preg_reg(RAX, RDX, expr->type->size);
+    } break;
+    case SIZEOF:
+    {
+        Type * size_type = parse_type(nth_child(ast, 0));
+        
+        Type * type = get_type("u64");
+        Value * value = new_value(type);
+        value->kind = VAL_CONSTANT;
+        value->_val = size_type->size;
+        
+        stack_push_new(value);
     } break;
     case CAST:
     {
@@ -2294,6 +2309,104 @@ void compile_code(Node * ast, int want_ptr)
         
         stack_push_new(value);
     } break;
+    case NCHAR:
+    {
+        char * text = strcpy_len(ast->text, ast->textlen);
+        assert(ast->textlen >= 3);
+        
+        char last_char = text[ast->textlen - 1];
+        
+        uint32_t c = text[1];
+        if (c == '\\')
+        {
+            char c2 = text[2];
+            if (c2 == 'n')
+                c = '\n';
+            else if (c2 == 'r')
+                c = '\r';
+            else if (c2 == 't')
+                c = '\t';
+            else if (c2 == '\'')
+                c = '\'';
+            else if (c2 == '\\')
+                c = '\\';
+            else
+                assert(("unknown char escape code", 0));
+        }
+        else if (c > 0x7F)
+        {
+            if ((c & 0xE0) == 0xC0)
+            {
+                assert(ast->textlen == 4);
+                c &= 0x1F;
+                
+                assert((text[2] & 0xC0) == 0x80);
+                
+                c <<= 5;
+                c |= text[2] & 0x3F;
+                
+                if (c > 0xFF)
+                    assert(("utf-8 chars must have a u32 suffix", (last_char == '2')));
+            }
+            else if ((c & 0xF0) == 0xE0)
+            {
+                assert(ast->textlen == 5);
+                c &= 0x0F;
+                
+                c <<= 4;
+                c |= text[2] & 0x3F;
+                
+                c <<= 6;
+                c |= text[3] & 0x3F;
+                
+                assert((text[2] & 0xC0) == 0x80);
+                assert((text[3] & 0xC0) == 0x80);
+                assert(("utf-8 chars must have a u32 suffix", (last_char == '2')));
+                
+            }
+            else if ((c & 0xF8) == 0xF0)
+            {
+                assert(ast->textlen == 6);
+                c &= 0x07;
+                
+                c <<= 3;
+                c |= text[2] & 0x3F;
+                
+                c <<= 6;
+                c |= text[3] & 0x3F;
+                
+                c <<= 6;
+                c |= text[4] & 0x3F;
+                
+                assert((text[2] & 0xC0) == 0x80);
+                assert((text[3] & 0xC0) == 0x80);
+                assert((text[4] & 0xC0) == 0x80);
+                assert(("utf-8 chars must have a u32 suffix", (last_char == '2')));
+                
+            }
+            else
+                assert(("broken utf-8 char", 0));
+        }
+        else
+            assert(ast->textlen == 3);
+        
+        if (last_char == '2')
+        {
+            Type * type = get_type("u32");
+            Value * value = new_value(type);
+            value->kind = VAL_CONSTANT;
+            value->_val = c;
+            stack_push_new(value);
+        }
+        else
+        {
+            Type * type = get_type("u8");
+            Value * value = new_value(type);
+            value->kind = VAL_CONSTANT;
+            value->_val = c;
+            stack_push_new(value);
+        }
+    } break;
     case NFLOAT:
     {
         puts("compiling float literal...");
@@ -2336,10 +2449,12 @@ void compile_code(Node * ast, int want_ptr)
         else
         {
             puts("compiling unary child...");
+            assert(nth_child(ast, 1));
             compile_code(nth_child(ast, 1), 0);
             puts("compiled unary child!");
             
             StackItem * val = stack_pop();
+            assert(val);
             // FIXME fully support constexpr
             _push_small_if_const(val->val);
             val->val->kind = VAL_STACK_TOP;
@@ -2449,6 +2564,57 @@ void compile_code(Node * ast, int want_ptr)
         {
             assert(("TODO: other infix ops", 0));
         }
+    } break;
+    case IFCONDITION:
+    {
+        compile_code(nth_child(ast, 0), 0);
+        StackItem * val = stack_pop();
+        _push_small_if_const(val->val);
+        val->val->kind = VAL_STACK_TOP;
+        
+        if (type_is_int(val->val->type) || type_is_pointer(val->val->type))
+        {
+            emit_pop_safe(RAX);
+            emit_test(RAX, RAX, val->val->type->size);
+            emit_jmp_cond_long(0, label_anon_num, J_EQ);
+        }
+        else
+            assert(("only int and pointer types are supported for conditions", 0));
+        
+        compile_code(nth_child(ast, 1), 0);
+        
+        // else block
+        if (nth_child(ast, 2))
+        {
+            emit_jmp_long(0, label_anon_num + 1);
+            emit_label(0, label_anon_num);
+            compile_code(nth_child(ast, 2), 0);
+            emit_label(0, label_anon_num + 1);
+            label_anon_num += 2;
+        }
+        else
+        {
+            emit_label(0, label_anon_num);
+            label_anon_num += 1;
+        }
+    } break;
+    case IFGOTO:
+    {
+        compile_code(nth_child(ast, 1), 0);
+        StackItem * val = stack_pop();
+        _push_small_if_const(val->val);
+        val->val->kind = VAL_STACK_TOP;
+        
+        char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
+        
+        if (type_is_int(val->val->type) || type_is_pointer(val->val->type))
+        {
+            emit_pop_safe(RAX);
+            emit_test(RAX, RAX, val->val->type->size);
+            emit_jmp_cond_long(text, 0, J_NE);
+        }
+        else
+            assert(("only int and pointer types are supported for conditions", 0));
     } break;
     default:
         printf("unhandled code AST node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
