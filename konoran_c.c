@@ -136,12 +136,17 @@ int main(int argc, char ** argv)
     printf("jit_code: %zX\n", (uint64_t)jit_code);
     printf("jit_startup: %zX\n", (uint64_t)jit_startup);
     assert(jit_startup);
+    
+    puts("---- running program");
+    
     jit_startup();
     //asdf = jit_main(152);
     //asdf = jit_main(0);
     assert(jit_main);
     //jit_main();
     jit_main(argc - 1, argv + 1);
+    
+    puts("---- program has been run");
     
     printf("%zd\n", asdf);
     printf("%zu\n", asdf);

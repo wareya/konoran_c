@@ -96,6 +96,21 @@ size_t guess_alignment_from_size(size_t size)
         a <<= 1;
     return a;
 }
+size_t guess_aligned_size_from_size(size_t size)
+{
+    size_t a = guess_alignment_from_size(size);
+    size_t ret = a;
+    while (ret < size)
+        ret += a;
+    return ret;
+}
+size_t guess_stack_size_from_size(size_t size)
+{
+    size_t ret = guess_aligned_size_from_size(size);
+    if (ret < 8)
+        return 8;
+    return ret;
+}
 
 typedef struct _GenericList
 {
@@ -391,6 +406,11 @@ Type * get_type(char * name)
     return last;
 }
 
+size_t type_stack_size(Type * type)
+{
+    return guess_stack_size_from_size(type->size);
+}
+
 enum { // global visibility type
     VIS_INVALID = 0,
     VIS_DEFAULT,
@@ -535,6 +555,23 @@ StackItem * stack_push_new(Value * val)
     StackItem * item = (StackItem *)zero_alloc(sizeof(StackItem));
     item->val = val;
     return stack_push(item);
+}
+StackItem * stack_push_new_top(Type * type)
+{
+    Value * value = new_value(type);
+    value->kind = VAL_STACK_TOP;
+    return stack_push_new(value);
+}
+StackItem * stack_push_new_anywhere(Type * type)
+{
+    assert(type_is_pointer(type));
+    Value * value = new_value(type);
+    value->kind = VAL_ANYWHERE;
+    return stack_push_new(value);
+}
+StackItem * stack_peek(void)
+{
+    return stack;
 }
 StackItem * stack_pop(void)
 {
@@ -815,6 +852,7 @@ void compile_defs_collect(Node * ast)
             char * name_text = strcpy_len(name->text, name->textlen);
             
             StructData * data = new_structdata(name_text, type);
+            // FIXME reject structs that reuse a property name other than "_"
             if (!first_data)
             {
                 first_data = data;
@@ -933,12 +971,14 @@ void emit_push_safe(int reg1)
 }
 void emit_pop_safe(int reg1)
 {
+    assert(stack_offset >= 8);
     //puts("emitting base reg pop...");
     emit_pop(reg1);
     stack_offset -= 8;
 }
 void emit_dry_pop_safe(void)
 {
+    assert(stack_offset >= 8);
     //puts("emitting base reg pop...");
     emit_add_imm(RSP, 8);
     stack_offset -= 8;
@@ -958,9 +998,24 @@ void emit_xmm_push_safe(int reg1, int size)
 }
 void emit_xmm_pop_safe(int reg1, int size)
 {
+    assert(stack_offset >= 8);
     //puts("emitting XMM pop...");
     emit_xmm_pop(reg1, size);
     stack_offset -= 8;
+}
+
+void emit_expand_stack_safe(int64_t amount)
+{
+    assert(amount >= 0 && amount <= 2147483647);
+    emit_sub_imm(RSP, amount);
+    stack_offset += amount;
+}
+void emit_shrink_stack_safe(int64_t amount)
+{
+    assert(stack_offset >= amount);
+    assert(amount >= 0 && amount <= 2147483647);
+    emit_add_imm(RSP, amount);
+    stack_offset -= amount;
 }
 
 void _push_small_if_const(Value * item)
@@ -1001,9 +1056,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             emit_add(RAX, RDX, 8);
             emit_push_safe(RAX);
             
-            Value * value = new_value(left->val->type);
-            value->kind = VAL_STACK_TOP;
-            stack_push_new(value);
+            stack_push_new_top(left->val->type);
             return;
         }
         else
@@ -1398,9 +1451,7 @@ c:  81 c1 00 00 20 80       add    ecx,0x80200000
             assert(("operation not supported on floats", 0));
     }
     
-    Value * value = new_value(left->val->type);
-    value->kind = VAL_STACK_TOP;
-    stack_push_new(value);
+    stack_push_new_top(left->val->type);
 }
 
 void compile_infix_equality(StackItem * left, StackItem * right, char op)
@@ -1654,9 +1705,7 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
         emit_push_safe(RAX);
     }
     
-    Value * value = new_value(get_type("u8"));
-    value->kind = VAL_STACK_TOP;
-    stack_push_new(value);
+    stack_push_new_top(get_type("u8"));
 }
 
 
@@ -1804,7 +1853,7 @@ void compile_code(Node * ast, int want_ptr)
                 
                 emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
                 
-                printf("emitting mov with offset of %zu...\n", -var->val->loc);
+                printf("emitting mov with offset of %zd...\n", -var->val->loc);
                 emit_push_safe(RAX);
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -1955,8 +2004,8 @@ void compile_code(Node * ast, int want_ptr)
                     arg_stack_size++;
                 
                 printf("stack size after %zd\n", arg_stack_size);
-                emit_sub_imm(RSP, arg_stack_size);
-                stack_offset += arg_stack_size;
+                
+                emit_expand_stack_safe(arg_stack_size);
                 
                 //abi_reset_state();
                 arg = funcdef->signature->next;
@@ -2012,8 +2061,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_offset(RAX, RSP, arg_stack_size, 8);
                 emit_call(RAX);
                 
-                emit_add_imm(RSP, arg_stack_size);
-                stack_offset -= arg_stack_size;
+                emit_shrink_stack_safe(arg_stack_size);
                 
                 // pop function address
                 emit_dry_pop_safe();
@@ -2035,7 +2083,153 @@ void compile_code(Node * ast, int want_ptr)
             } break;
             case INDIRECTION:
             {
-                assert(("TODO: INDIRECTION", 0));
+                Value * expr = stack_pop()->val;
+                Type * struct_type = expr->type;
+                // Indirection sometimes has to operate on a value instead of a virtual pointer.
+                // When this happens, it means that the value is at the top of the stack, pointed to by RSP.
+                uint8_t is_on_stack = 1;
+                if (type_is_pointer(struct_type))
+                {
+                    is_on_stack = 0;
+                    Type * ptr_type = expr->type;
+                    assert(ptr_type);
+                    struct_type = ptr_type->inner_type;
+                }
+                assert(struct_type);
+                assert(("tried to use indirection on non-struct", type_is_struct(struct_type)));
+                
+                Node * name = nth_child(ast, 1)->first_child;
+                char * name_text = strcpy_len(name->text, name->textlen);
+                
+                StructData * prop = struct_type->struct_data;
+                while (prop)
+                {
+                    if (strcmp(prop->name, name_text) == 0)
+                        break;
+                    prop = prop->next;
+                }
+                if (!prop)
+                {
+                    printf("culprit: '%s'\n", name_text);
+                    assert(("failed to find property", 0));
+                }
+                Type * prop_type = prop->type;
+                uint64_t prop_offset = prop->offset;
+                
+                // possible cases:
+                //
+                // - we want any pointer and the struct is not on the stack
+                // -- trivial, just pointer math
+                //
+                // - we want a REAL pointer and the struct IS on the stack
+                // -- if property is struct, move into temp var and return address
+                // --- TODO/FIXME implement
+                // -- else, code is wrong, error
+                //
+                // ! from here on, pointers cannot be generated, only on-stack values
+                // !! asking for virtual pointers for stack stuff just pushes the value onto the stack
+                // !! every real pointer case has been accounted for
+                //
+                // - the property is small
+                // -- copy out of struct into register, then push register onto stack
+                //
+                // - the property is large
+                // -- if struct IS on stack, memcpy property into new location on stack and shrink stack
+                // --- memcpy logic depends on whether there's overlap or not
+                // --- TODO/FIXME overlap case not implemented yet
+                // -- if struct not on stack, expand stack and memcpy property onto stack
+                
+                if (want_ptr != 0 && !is_on_stack)
+                {
+                    emit_pop_safe(RAX);
+                    emit_add_imm(RAX, prop_offset);
+                    emit_push_safe(RAX);
+                    
+                    stack_push_new_anywhere(make_ptr_type(prop_type));
+                }
+                else if (want_ptr == WANT_PTR_REAL && is_on_stack)
+                {
+                    assert(("Tried to get address of temporary primitive value; invalid operation.",
+                        type_is_struct(prop_type) || type_is_array(prop_type)));
+                    
+                    // FIXME: if we want a real pointer, and this is a struct/array on the stack,
+                    //  then make an anonymous var for it and return the ptr to that struct
+                    assert(("TODO: get real pointer from on-stack aggregate, make temp var etc", 0));
+                }
+                else if (prop_type->size <= 8)
+                {
+                    uint64_t struct_size_stack = type_stack_size(struct_type);
+                    
+                    if (is_on_stack)
+                    {
+                        emit_mov_offset(RAX, RSP, prop_offset, prop_type->size);
+                        emit_shrink_stack_safe(struct_size_stack);
+                        emit_push_safe(RAX);
+                        
+                        stack_push_new_top(prop_type);
+                    }
+                    else if (want_ptr == 0)
+                    {
+                        emit_pop_safe(RDX);
+                        emit_mov_offset(RAX, RDX, prop_offset, prop_type->size);
+                        emit_push_safe(RAX);
+                        
+                        stack_push_new_top(prop_type);
+                    }
+                    else
+                        assert(("UNREACHABLE!!! PLEASE REPORT", 0));
+                }
+                else
+                {
+                    assert(type_is_struct(prop_type) || type_is_array(prop_type));
+                    
+                    uint64_t struct_size_stack = type_stack_size(struct_type);
+                    uint64_t prop_size_stack = type_stack_size(prop_type);
+                    
+                    // on stack, don't want pointer, check for overlap and memcpy appropriately
+                    if (is_on_stack)
+                    {
+                        assert(("UNREACHABLE!!! PLEASE REPORT", want_ptr != WANT_PTR_REAL));
+                        
+                        uint64_t target_offset = struct_size_stack - prop_size_stack;
+                        uint64_t prop_end = prop_offset + prop_size_stack;
+                        // no overlap
+                        if (prop_end <= target_offset)
+                        {
+                            emit_mov(RSI, RSP, 8);
+                            emit_mov(RDI, RSP, 8);
+                            emit_add_imm(RDI, prop_offset);
+                            emit_mov_imm(RCX, prop_type->size, 8);
+                            emit_rep_movs(1);
+                            
+                            emit_shrink_stack_safe(target_offset);
+                            
+                            stack_push_new_top(prop_type);
+                        }
+                        // overlap
+                        else
+                        {
+                            assert(("TODO: INDIRECTION on stack with overlap", 0));
+                        }
+                    }
+                    else
+                    {
+                        // on heap, don't want pointer, expand stack and memcpy onto stack
+                        if (want_ptr == 0)
+                        {
+                            emit_pop_safe(RSI);
+                            emit_add_imm(RSI, prop_offset);
+                            emit_expand_stack_safe(prop_size_stack);
+                            emit_mov(RDI, RSP, 8);
+                            emit_mov_imm(RCX, prop_type->size, 8);
+                            emit_rep_movs(1);
+                            
+                            stack_push_new_top(prop_type);
+                        }
+                        else // on heap, want ptr? already covered
+                            assert(("UNREACHABLE!!! PLEASE REPORT", 0));
+                    }
+                }
             } break;
             default:
                 printf("unhandled code RHUNEXPR node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
@@ -2045,6 +2239,28 @@ void compile_code(Node * ast, int want_ptr)
             next = nth_child(ast, i);
         }
         printf("after %zu\n", stack_offset);
+    } break;
+    case STRUCT_LITERAL:
+    {
+        Node * type_node = nth_child(ast, 0);
+        Type * struct_type = parse_type(type_node);
+        uint64_t struct_size_stack = type_stack_size(struct_type);
+        printf("struct name: %s\n", struct_type->name);
+        printf("struct size on stack: %zu\n", struct_size_stack);
+        
+        emit_expand_stack_safe(struct_size_stack);
+        
+        StructData * struct_data = struct_type->struct_data;
+        Node * next = type_node->next_sibling;
+        assert(next);
+        while (next)
+        {
+            
+            struct_data = struct_data->next;
+            next = next->next_sibling;
+        }
+        
+        assert(("TODO: struct literal", 0));
     } break;
     case STATEMENT:
     {
@@ -2431,10 +2647,16 @@ void compile_code(Node * ast, int want_ptr)
             assert(("TODO: unsupported cast type pair", 0));
         }
     } break;
+    case CONSTEXPR:
+    {
+        compile_code(ast->first_child, want_ptr);
+        assert(stack_peek());
+        assert(stack_peek()->val->kind == VAL_CONSTANT);
+    } break;
     case PARENEXPR:
     case FREEZE:
     {
-        compile_code(ast->first_child, 0);
+        compile_code(ast->first_child, want_ptr);
     } break;
     case INTEGER:
     {
@@ -2620,15 +2842,28 @@ void compile_code(Node * ast, int want_ptr)
                 assert(val->val->type->variant == TYPE_POINTER);
                 
                 Type * new_type = val->val->type->inner_type;
-                assert(new_type->size <= 8);
                 
                 if (want_ptr == WANT_PTR_NONE)
                 {
                     if (val->val->kind == VAL_STACK_TOP)
                     {
-                        emit_pop_safe(RDX);
-                        emit_mov_reg_preg(RAX, RDX, new_type->size);
-                        emit_push_safe(RAX);
+                        if (new_type->size <= 8)
+                        {
+                            emit_pop_safe(RDX);
+                            emit_mov_reg_preg(RAX, RDX, new_type->size);
+                            emit_push_safe(RAX);
+                        }
+                        else
+                        {
+                            // source location
+                            emit_pop_safe(RSI);
+                            // destination location
+                            size_t aligned_size = type_stack_size(new_type);
+                            emit_expand_stack_safe(aligned_size);
+                            emit_mov(RDI, RSP, 8);
+                            emit_mov_imm(RCX, aligned_size, 8);
+                            emit_rep_movs(1);
+                        }
                         Value * value = new_value(new_type);
                         value->kind = VAL_STACK_TOP;
                         stack_push_new(value);
@@ -2640,9 +2875,20 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     if (val->val->kind == VAL_STACK_TOP)
                     {
-                        Value * value = new_value(new_type);
-                        value->kind = VAL_ANYWHERE;
-                        stack_push_new(value);
+                        /*
+                        if (want_ptr == WANT_PTR_VIRTUAL)
+                        {
+                            
+                        }
+                        else
+                        {
+                        */
+                            Value * value = new_value(make_ptr_type(new_type));
+                            value->kind = VAL_ANYWHERE;
+                            stack_push_new(value);
+                        /*
+                        }
+                        */
                     }
                     else
                         assert(("TODO: get non stack top pointers", 0));
@@ -3008,6 +3254,20 @@ void aggregate_type_recalc_size(Type * type)
         }
         
         assert(("zero-size structs properties are forbidden", offset));
+        
+        // erase leading "_" properties
+        while (type->struct_data && strcmp(type->struct_data->name, "_") == 0)
+            type->struct_data = type->struct_data->next;
+        assert(type->struct_data);
+        // erase internal "_" properties
+        data = type->struct_data;
+        while (data->next)
+        {
+            if (strcmp(data->next->name, "_") == 0)
+                data->next = data->next->next;
+            else
+                data = data->next;
+        }
         
         type->size = offset;
     }

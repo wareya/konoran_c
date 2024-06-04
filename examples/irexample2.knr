@@ -5,19 +5,17 @@
 
 
 
-/*
 f32 return_literal()
 {
     f32 x;
-exit:
     return 16.1f32;
 }
-*/
 
 struct Vec2
 {
     f32 x;
     f32 y;
+    u8 _; // make Vec2 larger than 8 bytes so it breaks implementations that only support 8-byte expressions
 }
 
 void add_to_x(ptr(Vec2) vec)

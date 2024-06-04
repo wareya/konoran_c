@@ -1216,18 +1216,25 @@ void emit_lea(int reg_d, int reg_s, int64_t offset)
         0x8D // actual op
     );
 }
-void emit_rep_movs(int size)
+// copy size bytes from RSI into RDI
+void emit_rep_movs(int chunk_size)
 {
     last_is_terminator = 0;
     
-    assert(size == 1 || size == 2 || size == 4 || size == 8);
-    if (size == 2)
+    assert(chunk_size == 1 || chunk_size == 2 || chunk_size == 4 || chunk_size == 8);
+    if (chunk_size == 2)
         byte_push(code, 0x66);
     byte_push(code, 0xF3);
-    if (size == 8)
+    if (chunk_size == 8)
         byte_push(code, 0x48);
-    byte_push(code, (size == 1) ? 0xA4 : 0xA5);
+    byte_push(code, (chunk_size == 1) ? 0xA4 : 0xA5);
 }
+/*
+void emit_memcpy_dynamic(int reg_d, int reg_s, int reg_count, int chunk_size)
+{
+    
+}
+*/
 void emit_call(int reg)
 {
     last_is_terminator = 0;
