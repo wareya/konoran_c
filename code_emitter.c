@@ -7,7 +7,7 @@
 extern byte_buffer * code;
 
 // for debugging. disables optimization.
-//#define EMITTER_ALWAYS_FLUSH
+#define EMITTER_ALWAYS_FLUSH
 
 enum {
     RAX,
@@ -1442,6 +1442,12 @@ void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
 void _impl_emit_push(int reg)
 {
     last_is_terminator = 0;
+    if (reg >= R8 && reg <= R15)
+    {
+        byte_push(code, 0x41);
+        reg &= 7;
+    }
+    assert(reg <= RDI);
     byte_push(code, 0x50 | reg);
 }
 void emit_push(int reg)
@@ -1452,6 +1458,12 @@ void emit_push(int reg)
 void _impl_emit_pop(int reg)
 {
     last_is_terminator = 0;
+    if (reg >= R8 && reg <= R15)
+    {
+        byte_push(code, 0x41);
+        reg &= 7;
+    }
+    assert(reg <= RDI);
     byte_push(code, 0x58 | reg);
 }
 void emit_pop(int reg)
@@ -2208,7 +2220,7 @@ uint8_t emitter_log_try_optimize(void)
 
 void emitter_log_optimize(void)
 {
-    //while (emitter_log_try_optimize()) {}
+    while (emitter_log_try_optimize()) {}
 }
 
 #pragma GCC diagnostic pop

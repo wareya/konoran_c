@@ -1,11 +1,7 @@
 
-struct Vector3 {
-    f64 x;
-    f64 y;
-    f64 z;
-}
 
-Vector3 vec3_nop(Vector3 a, f64 b)
+//array(u32, 1) agg_nop(array(u32, 1) a, f64 b)
+array(u32, 1) agg_nop(array(u32, 1) a, u64 b)
 {
     return a;
 }
@@ -21,9 +17,9 @@ Vector3 vec3_mul_f64(Vector3 a, f64 b)
 
 void main()
 {
-    Vector3 buh = Vector3 { 1.11f64, 4.01f64, 124.0142f64 };
+    array(u32, 1) buh = [ 111u32 ];
     
-    buh = vec3_nop(buh, 0.819529f64);
+    buh = agg_nop(buh, 222u64 );
     
     return;
 }

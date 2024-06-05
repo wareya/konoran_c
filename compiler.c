@@ -272,6 +272,8 @@ void do_fix_stack_size_usages(uint32_t stack_size)
         memcpy(&(code->data[loc]), &stack_size, 4);
         last = last->next;
     }
+    stack_size_usage = 0;
+    //printf("set stack size with %d\n", stack_size);
 }
 
 typedef struct _StructData
@@ -2466,10 +2468,10 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     return_storage_size += guess_stack_size_from_size(callee_return_type->size);
                     
-                    int64_t where = abi_get_next(0);
+                    return_where = abi_get_next(0);
                     
-                    if (-where > arg_stack_size)
-                        arg_stack_size = -where;
+                    if (-return_where > arg_stack_size)
+                        arg_stack_size = -return_where;
                 }
                 while (return_storage_size % 16)
                     return_storage_size += 1;
@@ -2564,6 +2566,7 @@ void compile_code(Node * ast, int want_ptr)
                     emit_push_safe(RAX);
                     
                     int64_t where = return_where;
+                    printf("!!19519 5   3#)!951910 return location %zX ----!!!513", return_where);
                     if (where >= 0)
                         emit_pop_safe(where);
                     else
@@ -4158,8 +4161,7 @@ void compile_defs_compile(Node * ast)
             var->val->kind = VAL_STACK_BOTTOM;
             var->val->loc = stack_loc;
         }
-        
-        emit_label(0, label_anon_num++);
+        //printf("--!!-!-- input loc %d\n", stack_loc);
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
@@ -4240,6 +4242,7 @@ void compile_defs_compile(Node * ast)
         assert(last_is_terminator);
         
         // fix up stack size usages
+        //printf("--!!-!-- output loc %d\n", stack_loc);
         do_fix_stack_size_usages(stack_loc);
         // fix up jumps
         do_fix_jumps();
@@ -4489,6 +4492,9 @@ void compile(Node * ast)
         next = ast->first_child;
         while (next)
         {
+            while (emitter_get_code_len() % 16)
+                emit_nop(1);
+            
             compile_defs_compile(next);
             next = next->next_sibling;
         }
