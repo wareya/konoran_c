@@ -227,8 +227,8 @@ void emit_nop(size_t len)
 void emit_label(char * label, size_t num)
 {
     // align in a way that's good for instruction decoding
-    //if (code->len % 16 > 12)
-    //    emit_nop(16 - (code->len % 16));
+    if (code->len % 16 > 12)
+        emit_nop(16 - (code->len % 16));
     last_is_terminator = 0;
     log_label(label, num, code->len);
 }

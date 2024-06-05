@@ -140,7 +140,9 @@ void offset_momentum(ptr(array(Body, 5)) bodies)
     i64 i = 1i64;
     loop_head:
         f64 ratio = (*bodies)[i].mass / SOLAR_MASS;
-        (*bodies)[0i64].vel = vec3_sub_vec3((*bodies)[0i64].vel, vec3_mul_f64((*bodies)[i].vel, ratio));
+        //(*bodies)[0i64].vel = vec3_sub_vec3((*bodies)[0i64].vel, vec3_mul_f64((*bodies)[i].vel, ratio));
+        Vector3 n = vec3_mul_f64((*bodies)[i].vel, ratio);
+        (*bodies)[0i64].vel = vec3_sub_vec3((*bodies)[0i64].vel, n);
         
         i = i + 1i64;
         if (i < 5i64)

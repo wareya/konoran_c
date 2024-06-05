@@ -2037,6 +2037,7 @@ FuncDef * current_funcdef = 0;
 
 void compile_code(Node * ast, int want_ptr)
 {
+    printf("code len before token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
     current_node = ast;
     switch (ast->type)
     {
@@ -2058,7 +2059,14 @@ void compile_code(Node * ast, int want_ptr)
             if (type_is_composite(return_type))
             {
                 Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
+                assert(var);
                 assert(("internal error: return slot variable for composite type return not found", var));
+                if (var->val->kind != VAL_STACK_BOTTOM)
+                {
+                    printf("actual kind %d\n", var->val->kind);
+                    assert(var->val->kind == VAL_STACK_BOTTOM);
+                }
+                printf("returning into pointer found at RBP minus %d....\n", var->val->loc);
                 emit_mov_offset(RDI, RBP, -var->val->loc, 8);
                 emit_mov(RAX, RDI, 8); // also return pointer in RAX
                 if (val->kind == VAL_CONSTANT)
@@ -2390,6 +2398,7 @@ void compile_code(Node * ast, int want_ptr)
                 GenericList * arg = funcdef->signature->next;
                 
                 // for aggregates, which are passed by pointer
+                int64_t return_storage_size = 0;
                 int64_t arg_storage_size = 0;
                 // points to left side of last arg, from the left, from RBP as seen inside callee
                 int64_t arg_stack_size = abi_get_min_stack_size();
@@ -2413,6 +2422,19 @@ void compile_code(Node * ast, int want_ptr)
                 while (arg_storage_size % 16)
                     arg_storage_size += 1;
                 
+                int64_t return_where = 0;
+                if (type_is_composite(callee_return_type))
+                {
+                    return_storage_size += guess_stack_size_from_size(callee_return_type->size);
+                    
+                    int64_t where = abi_get_next(0);
+                    
+                    if (-where > arg_stack_size)
+                        arg_stack_size = -where;
+                }
+                while (return_storage_size % 16)
+                    return_storage_size += 1;
+                
                 printf("stack size before %zd\n", arg_stack_size);
                 arg_stack_size += 8; // get pointer on right side of last arg, not left side
                 arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
@@ -2423,7 +2445,8 @@ void compile_code(Node * ast, int want_ptr)
                 
                 printf("stack size after %zd\n", arg_stack_size);
                 
-                emit_expand_stack_safe(arg_storage_size + arg_stack_size);
+                size_t total_stack_expansion = arg_stack_size + arg_storage_size + return_storage_size;
+                emit_expand_stack_safe(total_stack_expansion);
                 
                 ptrdiff_t arg_storage_used = 0;
                 arg = funcdef->signature->next;
@@ -2466,7 +2489,14 @@ void compile_code(Node * ast, int want_ptr)
                     else
                         _push_small_if_const(arg_expr);
                     
-                    //int64_t where = abi_get_next(type_is_float(type));
+                    arg = arg->next;
+                    arg_node = arg_node->next_sibling;
+                }
+                assert(("too many args to function", !arg_node));
+                
+                arg = funcdef->signature->next;
+                while (arg)
+                {
                     int64_t where = (int64_t)argwheres->item;
                     argwheres = argwheres->next;
                     if (where >= 0)
@@ -2484,11 +2514,26 @@ void compile_code(Node * ast, int want_ptr)
                         emit_mov_into_offset(RSP, where, RAX, 8);
                         assert(where + 8 <= arg_stack_size);
                     }
-                    
                     arg = arg->next;
-                    arg_node = arg_node->next_sibling;
                 }
-                assert(("too many args to function", !arg_node));
+                
+                if (type_is_composite(callee_return_type))
+                {
+                    emit_lea(RAX, RSP, arg_stack_size + arg_storage_size);
+                    emit_push_safe(RAX);
+                    
+                    int64_t where = return_where;
+                    if (where >= 0)
+                        emit_pop_safe(where);
+                    else
+                    {
+                        emit_pop_safe(RAX);
+                        where = -where;
+                        where -= 16; // remove rbp and return address from offset consideration
+                        emit_mov_into_offset(RSP, where, RAX, 8);
+                        assert(where + 8 <= arg_stack_size);
+                    }
+                }
                 
                 //#define DO_CALL_STACK_VERIFY_AT_RUNTIME
                 #ifdef DO_CALL_STACK_VERIFY_AT_RUNTIME
@@ -2503,10 +2548,10 @@ void compile_code(Node * ast, int want_ptr)
                 #endif
                 
                 assert(expr->kind == VAL_STACK_TOP);
-                emit_mov_offset(RAX, RSP, arg_storage_size + arg_stack_size, 8);
+                emit_mov_offset(RAX, RSP, total_stack_expansion, 8);
                 emit_call(RAX);
                 
-                emit_shrink_stack_safe(arg_storage_size + arg_stack_size);
+                emit_shrink_stack_safe(total_stack_expansion);
                 
                 // pop function address
                 emit_dry_pop_safe();
@@ -4016,6 +4061,7 @@ void compile_code(Node * ast, int want_ptr)
         printf("unhandled code AST node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
         assert(0);
     }
+    printf("code len after token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
 }
 
 void compile_defs_compile(Node * ast)
@@ -4059,9 +4105,18 @@ void compile_defs_compile(Node * ast)
         }
         if (type_is_composite(return_type))
         {
-            add_local("___RETURN_POINTER_bzfkmje", make_ptr_type(return_type));
+            Type * type = make_ptr_type(return_type);
+            size_t align = guess_alignment_from_size(type->size);
+            stack_loc += type->size;
+            while (stack_loc % align)
+                stack_loc++;
+            
+            Variable * var = add_local("___RETURN_POINTER_bzfkmje", type);
+            var->val->kind = VAL_STACK_BOTTOM;
+            var->val->loc = stack_loc;
         }
-        // FIXME check if return type is a large struct, because they're returned by memsetting into pointers
+        
+        emit_label(0, label_anon_num++);
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
