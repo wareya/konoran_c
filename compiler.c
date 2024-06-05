@@ -38,9 +38,6 @@ Node * current_node = 0;
         crash(), ((void)0)) \
       : ((void)0))
 
-#include "code_emitter.c"
-#include "abi_handler.h"
-
 union KonoranCMaxAlignT
 {
     int a;
@@ -80,6 +77,9 @@ void free_all_compiler_allocs(void)
         alloc_list = alloc_next;
     }
 }
+
+#include "code_emitter.c"
+#include "abi_handler.h"
 
 // strncmp but checks len of left string
 int strcmp_len(const char * a, const char * b, size_t len)
@@ -344,10 +344,10 @@ uint8_t types_same(Type * a, Type * b)
     if (a->size != b->size || a->variant != b->variant || a->primitive_type != b->primitive_type || strcmp(a->name, b->name) != 0)
     {
         puts("-- general type mismatch");
-        printf("%d, %d\n", a->size, b->size);
+        printf("%zd, %zd\n", a->size, b->size);
         printf("%s, %s\n", a->name, b->name);
-        printf("%d, %d\n", a->inner_count, b->inner_count);
-        printf("%d, %d\n", a->inner_type, b->inner_type);
+        printf("%zd, %zd\n", a->inner_count, b->inner_count);
+        printf("%zd, %zd\n", (uint64_t)a->inner_type, (uint64_t)b->inner_type);
         return 0;
     }
     if (type_is_pointer(a) && type_is_pointer(b))
@@ -2066,7 +2066,7 @@ void compile_code(Node * ast, int want_ptr)
                     printf("actual kind %d\n", var->val->kind);
                     assert(var->val->kind == VAL_STACK_BOTTOM);
                 }
-                printf("returning into pointer found at RBP minus %d....\n", var->val->loc);
+                printf("returning into pointer found at RBP minus %zd....\n", var->val->loc);
                 emit_mov_offset(RDI, RBP, -var->val->loc, 8);
                 emit_mov(RAX, RDI, 8); // also return pointer in RAX
                 if (val->kind == VAL_CONSTANT)
@@ -2234,7 +2234,7 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     stack_push_new(var->val);
                     printf("rvar is const...? %d\n", var->val->kind == VAL_CONSTANT);
-                    printf("__ __ -!_ -> %d %d\n", var->val->loc, var->val->mem);
+                    printf("__ __ -!_ -> %zd %p\n", var->val->loc, (void *)var->val->mem);
                 }
                 else
                 {
@@ -4367,7 +4367,7 @@ void aggregate_type_recalc_size(Type * type)
         size_t inner_size = guess_aligned_size_from_size(inner->size);
         type->size = inner_size * count;
         
-        printf("!!!---!- recalculated array size as %d\n", type->size);
+        printf("!!!---!- recalculated array size as %zd\n", type->size);
     }
 }
 

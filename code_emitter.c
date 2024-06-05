@@ -140,9 +140,142 @@ void do_fix_jumps(void)
     clear_jump_log();
 }
 
+typedef struct _EmitterLog {
+    void * funcptr;
+    uint64_t args[8];
+    struct _EmitterLog * prev;
+    struct _EmitterLog * next;
+} EmitterLog;
+
+#define EMITTER_LOG_MAX_LEN (20)
+
+size_t emitter_log_size = 0;
+EmitterLog * emitter_log = 0;
+EmitterLog * emitter_log_get_nth(size_t n)
+{
+    if (n >= emitter_log_size)
+        return 0;
+    EmitterLog * log = emitter_log;
+    while (n--)
+        log = log->prev;
+    return log;
+}
+void emitter_log_optimize(void);
+
+void emitter_log_apply(EmitterLog * log);
+
+void emitter_log_flush(void)
+{
+    EmitterLog * log = emitter_log;
+    while (log && log->prev)
+        log = log->prev;
+    
+    while (log)
+    {
+        emitter_log_apply(log);
+        emitter_log_size -= 1;
+        log = log->next;
+    }
+    assert(emitter_log_size == 0);
+    
+    emitter_log = 0;
+}
+
+EmitterLog * emitter_log_remove(EmitterLog * arg_log)
+{
+    if (emitter_log == arg_log && emitter_log)
+    {
+        if (emitter_log->prev)
+            emitter_log->prev->next = 0;
+        emitter_log = emitter_log->prev;
+    }
+    else if (arg_log)
+    {
+        if (arg_log->prev)
+            arg_log->prev->next = arg_log->next;
+        if (arg_log->next)
+            arg_log->next->prev = arg_log->prev;
+    }
+    emitter_log_size -= 1;
+    return arg_log;
+}
+EmitterLog * emitter_log_erase_nth(size_t n)
+{
+    EmitterLog * log = emitter_log_get_nth(n);
+    return emitter_log_remove(log);
+}
+void emitter_log_add(EmitterLog * arg_log)
+{
+    arg_log->prev = emitter_log;
+    if (emitter_log)
+        emitter_log->next = arg_log;
+    emitter_log = arg_log;
+    emitter_log_size += 1;
+    
+    while (emitter_log_size > EMITTER_LOG_MAX_LEN)
+    {
+        EmitterLog * log = emitter_log;
+        while (log && log->prev)
+            log = log->prev;
+        if (log->next)
+            log->next->prev = 0;
+        emitter_log_apply(log);
+        
+        emitter_log_size -= 1;
+    }
+    
+    emitter_log_optimize();
+}
+void _emitter_log_add_0(void * funcptr)
+{
+    EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
+    log->funcptr = funcptr;
+    emitter_log_add(log);
+}
+void _emitter_log_add_1(void * funcptr, uint64_t arg_1)
+{
+    EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
+    log->funcptr = funcptr;
+    log->args[0] = arg_1;
+    emitter_log_add(log);
+}
+void _emitter_log_add_2(void * funcptr, uint64_t arg_1, uint64_t arg_2)
+{
+    EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
+    log->funcptr = funcptr;
+    log->args[0] = arg_1;
+    log->args[1] = arg_2;
+    emitter_log_add(log);
+}
+void _emitter_log_add_3(void * funcptr, uint64_t arg_1, uint64_t arg_2, uint64_t arg_3)
+{
+    EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
+    log->funcptr = funcptr;
+    log->args[0] = arg_1;
+    log->args[1] = arg_2;
+    log->args[2] = arg_3;
+    emitter_log_add(log);
+}
+void _emitter_log_add_4(void * funcptr, uint64_t arg_1, uint64_t arg_2, uint64_t arg_3, uint64_t arg_4)
+{
+    EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
+    log->funcptr = funcptr;
+    log->args[0] = arg_1;
+    log->args[1] = arg_2;
+    log->args[2] = arg_3;
+    log->args[3] = arg_4;
+    emitter_log_add(log);
+}
+
+#define emitter_log_add_0(X)              _emitter_log_add_0((void *)(X))
+#define emitter_log_add_1(X, A)           _emitter_log_add_1((void *)(X), (uint64_t)(A))
+#define emitter_log_add_2(X, A, B)        _emitter_log_add_2((void *)(X), (uint64_t)(A), (uint64_t)(B))
+#define emitter_log_add_3(X, A, B, C)     _emitter_log_add_3((void *)(X), (uint64_t)(A), (uint64_t)(B), (uint64_t)(C))
+#define emitter_log_add_4(X, A, B, C, D)  _emitter_log_add_4((void *)(X), (uint64_t)(A), (uint64_t)(B), (uint64_t)(C), (uint64_t)(D))
+
 size_t emitter_get_code_len(void)
 {
-    // ... first, flush all commands, once a command queue is implemented. then:
+    emitter_log_flush();
     return code->len;
 }
 
@@ -169,21 +302,33 @@ enum {
     J_SLE = 0xE, // LE
     J_SGT = 0xF, // GT
 };
-void emit_jmp_short(char * label, size_t num)
+void _impl_emit_jmp_short(char * label, size_t num)
 {
     last_is_terminator = 1;
     byte_push(code, 0xEB);
     log_jump(label, num, code->len, 1);
     byte_push(code, 0x7E); // infinite loop until overwritten
 }
-void emit_jmp_cond_short(char * label, size_t num, int cond)
+void emit_jmp_short(char * label, size_t num)
+{
+    emitter_log_flush();
+    emitter_log_add_2(_impl_emit_jmp_short, label, num);
+    emitter_log_flush();
+}
+void _impl_emit_jmp_cond_short(char * label, size_t num, int cond)
 {
     last_is_terminator = 1;
     byte_push(code, 0x70 | cond);
     log_jump(label, num, code->len, 1);
     byte_push(code, 0x7E); // infinite loop until overwritten
 }
-void emit_jmp_long(char * label, size_t num)
+void emit_jmp_cond_short(char * label, size_t num, int cond)
+{
+    emitter_log_flush();
+    emitter_log_add_3(_impl_emit_jmp_cond_short, label, num, cond);
+    emitter_log_flush();
+}
+void _impl_emit_jmp_long(char * label, size_t num)
 {
     last_is_terminator = 1;
     byte_push(code, 0xE9);
@@ -193,7 +338,13 @@ void emit_jmp_long(char * label, size_t num)
     byte_push(code, 0xFF);
     byte_push(code, 0x7F);
 }
-void emit_jmp_cond_long(char * label, size_t num, int cond)
+void emit_jmp_long(char * label, size_t num)
+{
+    emitter_log_flush();
+    emitter_log_add_2(_impl_emit_jmp_long, label, num);
+    emitter_log_flush();
+}
+void _impl_emit_jmp_cond_long(char * label, size_t num, int cond)
 {
     last_is_terminator = 1;
     byte_push(code, 0x0F);
@@ -204,7 +355,13 @@ void emit_jmp_cond_long(char * label, size_t num, int cond)
     byte_push(code, 0xFF);
     byte_push(code, 0x7F);
 }
-void emit_nop(size_t len)
+void emit_jmp_cond_long(char * label, size_t num, int cond)
+{
+    emitter_log_flush();
+    emitter_log_add_3(_impl_emit_jmp_cond_long, label, num, cond);
+    emitter_log_flush();
+}
+void _impl_emit_nop(size_t len)
 {
     last_is_terminator = 0;
     if (len == 1)
@@ -223,8 +380,12 @@ void emit_nop(size_t len)
     else
         assert(("tried to build nop of unsupported length", 0));
 }
+void emit_nop(size_t len)
+{
+    emitter_log_add_1(_impl_emit_nop, len);
+}
 
-void emit_label(char * label, size_t num)
+void _impl_emit_label(char * label, size_t num)
 {
     // align in a way that's good for instruction decoding
     if (code->len % 16 > 12)
@@ -232,13 +393,25 @@ void emit_label(char * label, size_t num)
     last_is_terminator = 0;
     log_label(label, num, code->len);
 }
-void emit_ret(void)
+void emit_label(char * label, size_t num)
+{
+    emitter_log_flush();
+    emitter_log_add_2(_impl_emit_label, label, num);
+    emitter_log_flush();
+}
+void _impl_emit_ret(void)
 {
     last_is_terminator = 1;
     byte_push(code, 0xC3);
 }
+void emit_ret(void)
+{
+    emitter_log_flush();
+    emitter_log_add_0(_impl_emit_ret);
+    emitter_log_flush();
+}
 
-void emit_sub_imm(int reg, int64_t val)
+void _impl_emit_sub_imm(int reg, int64_t val)
 {
     last_is_terminator = 0;
     
@@ -267,7 +440,11 @@ void emit_sub_imm(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
-void emit_sub_imm32(int reg, int64_t val)
+void emit_sub_imm(int reg, int64_t val)
+{
+    emitter_log_add_2(_impl_emit_sub_imm, reg, val);
+}
+void _impl_emit_sub_imm32(int reg, int64_t val)
 {
     last_is_terminator = 0;
     
@@ -287,7 +464,13 @@ void emit_sub_imm32(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
-void emit_add_imm(int reg, int64_t val)
+void emit_sub_imm32(int reg, int64_t val)
+{
+    emitter_log_flush();
+    emitter_log_add_2(_impl_emit_sub_imm32, reg, val);
+    emitter_log_flush();
+}
+void _impl_emit_add_imm(int reg, int64_t val)
 {
     last_is_terminator = 0;
     
@@ -316,7 +499,11 @@ void emit_add_imm(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
-void emit_add_imm32(int reg, int64_t val)
+void emit_add_imm(int reg, int64_t val)
+{
+    emitter_log_add_2(_impl_emit_add_imm, reg, val);
+}
+void _impl_emit_add_imm32(int reg, int64_t val)
 {
     last_is_terminator = 0;
     
@@ -335,6 +522,12 @@ void emit_add_imm32(int reg, int64_t val)
         byte_push(code, 0xC0 | reg);
         bytes_push_int(code, (uint64_t)val, 4);
     }
+}
+void emit_add_imm32(int reg, int64_t val)
+{
+    emitter_log_flush();
+    emitter_log_add_2(_impl_emit_add_imm32, reg, val);
+    emitter_log_flush();
 }
 
 // 48 89 c0                mov    rax,rax
@@ -395,23 +588,44 @@ void _emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
     byte_push(code, opcode + (size > 1));
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
 }
-void emit_add(int reg_d, int reg_s, size_t size)
+//  ---
+void _impl_emit_add(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x00);
 }
-void emit_sub(int reg_d, int reg_s, size_t size)
+void emit_add(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_add, reg_d, reg_s, size);
+}
+//  ---
+void _impl_emit_sub(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x28);
 }
-void emit_cmp(int reg_d, int reg_s, size_t size)
+void emit_sub(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_sub, reg_d, reg_s, size);
+}
+//  ---
+void _impl_emit_cmp(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x38);
 }
-void emit_test(int reg_d, int reg_s, size_t size)
+void emit_cmp(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_cmp, reg_d, reg_s, size);
+}
+//  ---
+void _impl_emit_test(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x84);
 }
-void emit_xor(int reg_d, int reg_s, size_t size)
+void emit_test(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_test, reg_d, reg_s, size);
+}
+//  ---
+void _impl_emit_xor(int reg_d, int reg_s, size_t size)
 {
     // smaller encoding, same behavior (ops on 32-bit registers clear the upper bytes)
     if (reg_d == reg_s && size == 8)
@@ -419,15 +633,30 @@ void emit_xor(int reg_d, int reg_s, size_t size)
     
     _emit_addlike(reg_d, reg_s, size, 0x30);
 }
-void emit_and(int reg_d, int reg_s, size_t size)
+void emit_xor(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_xor, reg_d, reg_s, size);
+}
+// ---
+void _impl_emit_and(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x20);
 }
-void emit_or(int reg_d, int reg_s, size_t size)
+void emit_and(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_and, reg_d, reg_s, size);
+}
+// ---
+void _impl_emit_or(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x08);
 }
-void emit_mullike(int reg, size_t size, uint8_t maskee)
+void emit_or(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_or, reg_d, reg_s, size);
+}
+// ---
+void _emit_mullike(int reg, size_t size, uint8_t maskee)
 {
     last_is_terminator = 0;
     
@@ -437,32 +666,62 @@ void emit_mullike(int reg, size_t size, uint8_t maskee)
     byte_push(code, (size > 1) ? 0xF7 : 0xF6);
     byte_push(code, maskee | reg);
 }
+void _impl_emit_mul(int reg, size_t size)
+{
+    _emit_mullike(reg, size, 0xE0);
+}
+// ---
 void emit_mul(int reg, size_t size)
 {
-    emit_mullike(reg, size, 0xE0);
+    emitter_log_add_2(_impl_emit_mul, reg, size);
 }
+void _impl_emit_imul(int reg, size_t size)
+{
+    _emit_mullike(reg, size, 0xE8);
+}
+// ---
 void emit_imul(int reg, size_t size)
 {
-    emit_mullike(reg, size, 0xE8);
+    emitter_log_add_2(_impl_emit_imul, reg, size);
 }
+void _impl_emit_div(int reg, size_t size)
+{
+    _emit_mullike(reg, size, 0xF0);
+}
+// ---
 void emit_div(int reg, size_t size)
 {
-    emit_mullike(reg, size, 0xF0);
+    emitter_log_add_2(_impl_emit_div, reg, size);
 }
+void _impl_emit_idiv(int reg, size_t size)
+{
+    _emit_mullike(reg, size, 0xF8);
+}
+// ---
 void emit_idiv(int reg, size_t size)
 {
-    emit_mullike(reg, size, 0xF8);
+    emitter_log_add_2(_impl_emit_idiv, reg, size);
 }
+void _impl_emit_neg(int reg, size_t size)
+{
+    _emit_mullike(reg, size, 0xD8);
+}
+// ---
 void emit_neg(int reg, size_t size)
 {
-    emit_mullike(reg, size, 0xD8);
+    emitter_log_add_2(_impl_emit_neg, reg, size);
 }
+void _impl_emit_not(int reg, size_t size)
+{
+    _emit_mullike(reg, size, 0xD0);
+}
+// ---
 void emit_not(int reg, size_t size)
 {
-    emit_mullike(reg, size, 0xD0);
+    emitter_log_add_2(_impl_emit_not, reg, size);
 }
 
-void emit_float_op(int reg_d, int reg_s, size_t size, uint8_t op)
+void _emit_float_op(int reg_d, int reg_s, size_t size, uint8_t op)
 {
 // f3 0f 59 c0             mulss  xmm0,xmm0
 // f3 0f 59 c7             mulss  xmm0,xmm7
@@ -488,28 +747,53 @@ void emit_float_op(int reg_d, int reg_s, size_t size, uint8_t op)
     byte_push(code, op);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+// ---
+void _impl_emit_float_mul(int reg_d, int reg_s, size_t size)
+{
+    _emit_float_op(reg_d, reg_s, size, 0x59);
+}
 void emit_float_mul(int reg_d, int reg_s, size_t size)
 {
-    emit_float_op(reg_d, reg_s, size, 0x59);
+    emitter_log_add_3(_impl_emit_float_mul, reg_d, reg_s, size);
+}
+// ---
+void _impl_emit_float_div(int reg_d, int reg_s, size_t size)
+{
+    _emit_float_op(reg_d, reg_s, size, 0x5E);
 }
 void emit_float_div(int reg_d, int reg_s, size_t size)
 {
-    emit_float_op(reg_d, reg_s, size, 0x5E);
+    emitter_log_add_3(_impl_emit_float_div, reg_d, reg_s, size);
+}
+// ---
+void _impl_emit_float_add(int reg_d, int reg_s, size_t size)
+{
+    _emit_float_op(reg_d, reg_s, size, 0x58);
 }
 void emit_float_add(int reg_d, int reg_s, size_t size)
 {
-    emit_float_op(reg_d, reg_s, size, 0x58);
+    emitter_log_add_3(_impl_emit_float_add, reg_d, reg_s, size);
+}
+// ---
+void _impl_emit_float_sub(int reg_d, int reg_s, size_t size)
+{
+    _emit_float_op(reg_d, reg_s, size, 0x5C);
 }
 void emit_float_sub(int reg_d, int reg_s, size_t size)
 {
-    emit_float_op(reg_d, reg_s, size, 0x5C);
+    emitter_log_add_3(_impl_emit_float_sub, reg_d, reg_s, size);
+}
+// ---
+void _impl_emit_float_sqrt(int reg_d, int reg_s, size_t size)
+{
+    _emit_float_op(reg_d, reg_s, size, 0x51);
 }
 void emit_float_sqrt(int reg_d, int reg_s, size_t size)
 {
-    emit_float_op(reg_d, reg_s, size, 0x51);
+    emitter_log_add_3(_impl_emit_float_sqrt, reg_d, reg_s, size);
 }
 
-void emit_xorps(int reg_d, int reg_s)
+void _impl_emit_xorps(int reg_d, int reg_s)
 {
 //  0f 57 c0                xorps  xmm0,xmm0
 //  0f 57 c7                xorps  xmm0,xmm7
@@ -525,8 +809,12 @@ void emit_xorps(int reg_d, int reg_s)
     byte_push(code, 0x57);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+void emit_xorps(int reg_d, int reg_s)
+{
+    emitter_log_add_2(_impl_emit_xorps, reg_d, reg_s);
+}
 
-void emit_bts(int reg, uint8_t bit)
+void _impl_emit_bts(int reg, uint8_t bit)
 {
     last_is_terminator = 0;
     
@@ -548,7 +836,12 @@ void emit_bts(int reg, uint8_t bit)
     byte_push(code, 0xE8 | reg);
     byte_push(code, bit);
 }
-void emit_bt(int reg, uint8_t bit)
+void emit_bts(int reg, uint8_t bit)
+{
+    emitter_log_add_2(_impl_emit_bts, reg, bit);
+}
+
+void _impl_emit_bt(int reg, uint8_t bit)
 {
     last_is_terminator = 0;
     
@@ -562,6 +855,10 @@ void emit_bt(int reg, uint8_t bit)
     byte_push(code, 0xBA);
     byte_push(code, 0xE0 | reg);
     byte_push(code, bit);
+}
+void emit_bt(int reg, uint8_t bit)
+{
+    emitter_log_add_2(_impl_emit_bt, reg, bit);
 }
 
 // ucomiss / ucomisd
@@ -619,7 +916,7 @@ void emit_bt(int reg, uint8_t bit)
 // from there, use J_EQ for == or J_NE for !=
 //
 // compare floats in xmm registers
-void emit_compare_float(int reg_d, int reg_s, size_t size)
+void _impl_emit_compare_float(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
     assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
@@ -633,6 +930,10 @@ void emit_compare_float(int reg_d, int reg_s, size_t size)
     byte_push(code, 0x0F);
     byte_push(code, 0x2E);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+void emit_compare_float(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_compare_float, reg_d, reg_s, size);
 }
 
 // f64 to i64
@@ -659,7 +960,7 @@ void emit_compare_float(int reg_d, int reg_s, size_t size)
 // f3 0f 2c ff             cvttss2si edi,xmm7
 // f3 44 0f 2c c7          cvttss2si r8d,xmm7
 
-void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
+void _impl_emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
 {
     last_is_terminator = 0;
     assert(size_i == 4 || size_i == 8);
@@ -680,6 +981,10 @@ void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
     byte_push(code, 0x2C);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
+{
+    emitter_log_add_4(_impl_emit_cast_float_to_int, reg_d, reg_s, size_i, size_f);
+}
 
 // f3 48 0f 2a c0          cvtsi2ss xmm0,rax
 // f3 48 0f 2a f8          cvtsi2ss xmm7,rax
@@ -697,7 +1002,7 @@ void emit_cast_float_to_int(int reg_d, int reg_s, size_t size_i, size_t size_f)
 
 // f2 49 0f 2a f8          cvtsi2sd xmm7,r8
 // f2 41 0f 2a f8          cvtsi2sd xmm7,r8d
-void emit_cast_int_to_float(int reg_d, int reg_s, size_t size_f, size_t size_i)
+void _impl_emit_cast_int_to_float(int reg_d, int reg_s, size_t size_f, size_t size_i)
 {
     last_is_terminator = 0;
     assert(size_i == 4 || size_i == 8);
@@ -718,6 +1023,10 @@ void emit_cast_int_to_float(int reg_d, int reg_s, size_t size_f, size_t size_i)
     byte_push(code, 0x2A);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+void emit_cast_int_to_float(int reg_d, int reg_s, size_t size_f, size_t size_i)
+{
+    emitter_log_add_4(_impl_emit_cast_int_to_float, reg_d, reg_s, size_f, size_i);
+}
 
 // f3 0f 5a c0             cvtss2sd xmm0,xmm0
 // f3 0f 5a c7             cvtss2sd xmm0,xmm7
@@ -726,7 +1035,7 @@ void emit_cast_int_to_float(int reg_d, int reg_s, size_t size_f, size_t size_i)
 // f2 0f 5a c0             cvtsd2ss xmm0,xmm0
 // f2 0f 5a c7             cvtsd2ss xmm0,xmm7
 // f2 0f 5a ff             cvtsd2ss xmm7,xmm7
-void emit_cast_float_to_float(int reg_d, int reg_s, size_t size_d, size_t size_s)
+void _impl_emit_cast_float_to_float(int reg_d, int reg_s, size_t size_d, size_t size_s)
 {
     last_is_terminator = 0;
     
@@ -743,6 +1052,10 @@ void emit_cast_float_to_float(int reg_d, int reg_s, size_t size_d, size_t size_s
     byte_push(code, 0x0F);
     byte_push(code, 0x5A);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
+}
+void emit_cast_float_to_float(int reg_d, int reg_s, size_t size_d, size_t size_s)
+{
+    emitter_log_add_4(_impl_emit_cast_float_to_float, reg_d, reg_s, size_d, size_s);
 }
 
 // i64 to f64
@@ -774,7 +1087,7 @@ void emit_cast_float_to_float(int reg_d, int reg_s, size_t size_d, size_t size_s
 // MOVZX (or MOV) to same register
 // RDI and lower only
 // TODO test if implemented correctly
-void emit_zero_extend(int reg, int size_to, int size_from)
+void _impl_emit_zero_extend(int reg, int size_to, int size_from)
 {
     last_is_terminator = 0;
     
@@ -819,10 +1132,14 @@ void emit_zero_extend(int reg, int size_to, int size_from)
     }
     byte_push(code, 0xC0 | reg | (reg << 3));
 }
+void emit_zero_extend(int reg, int size_to, int size_from)
+{
+    emitter_log_add_3(_impl_emit_zero_extend, reg, size_to, size_from);
+}
 
 // MOVSX to same register
 // RDI and lower only
-void emit_sign_extend(int reg, int size_to, int size_from)
+void _impl_emit_sign_extend(int reg, int size_to, int size_from)
 {
     last_is_terminator = 0;
     
@@ -869,8 +1186,12 @@ void emit_sign_extend(int reg, int size_to, int size_from)
     }
     byte_push(code, 0xC0 | reg | (reg << 3));
 }
+void emit_sign_extend(int reg, int size_to, int size_from)
+{
+    emitter_log_add_3(_impl_emit_sign_extend, reg, size_to, size_from);
+}
 
-void emit_cmov(int reg_d, int reg_s, int cond, int size)
+void _impl_emit_cmov(int reg_d, int reg_s, int cond, int size)
 {
     last_is_terminator = 0;
     
@@ -887,8 +1208,12 @@ void emit_cmov(int reg_d, int reg_s, int cond, int size)
     byte_push(code, 0x40 | cond);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+void emit_cmov(int reg_d, int reg_s, int cond, int size)
+{
+    emitter_log_add_4(_impl_emit_cmov, reg_d, reg_s, cond, size);
+}
 
-void emit_cset(int reg, int cond)
+void _impl_emit_cset(int reg, int cond)
 {
     last_is_terminator = 0;
     
@@ -901,12 +1226,16 @@ void emit_cset(int reg, int cond)
     byte_push(code, 0x90 | cond);
     byte_push(code, 0xC0 | reg);
 }
+void emit_cset(int reg, int cond)
+{
+    emitter_log_add_2(_impl_emit_cset, reg, cond);
+}
 
 // 66 0f 6e c0             movd   xmm0,eax
 // 66 0f 6e c7             movd   xmm0,edi
 // 66 48 0f 6e c0          movq   xmm0,rax
 // 66 48 0f 6e c7          movq   xmm0,rdi
-void emit_mov_xmm_from_base(int reg_d, int reg_s, size_t size)
+void _impl_emit_mov_xmm_from_base(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
     assert(size == 4 || size == 8);
@@ -923,11 +1252,16 @@ void emit_mov_xmm_from_base(int reg_d, int reg_s, size_t size)
     byte_push(code, 0x6E);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+void emit_mov_xmm_from_base(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov_xmm_from_base, reg_d, reg_s, size);
+}
+
 // 66 0f 7e c0             movd   eax,xmm0
 // 66 0f 7e c7             movd   edi,xmm0
 // 66 48 0f 7e c0          movq   rax,xmm0
 // 66 48 0f 7e c7          movq   rdi,xmm0
-void emit_mov_base_from_xmm(int reg_d, int reg_s, size_t size)
+void _impl_emit_mov_base_from_xmm(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
     assert(size == 4 || size == 8);
@@ -944,10 +1278,15 @@ void emit_mov_base_from_xmm(int reg_d, int reg_s, size_t size)
     byte_push(code, 0x7E);
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
 }
+void emit_mov_base_from_xmm(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov_base_from_xmm, reg_d, reg_s, size);
+}
+
 // f3 0f 7e c0             movq   xmm0,xmm0
 // f3 0f 7e c7             movq   xmm0,xmm7
 // f3 0f 7e ff             movq   xmm7,xmm7
-void emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
+void _impl_emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
     assert(size == 4 || size == 8);
@@ -962,6 +1301,11 @@ void emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
     byte_push(code, 0x7E);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
+void emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov_xmm_xmm, reg_d, reg_s, size);
+}
+
 
 void _emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uint8_t byteop, uint8_t longop)
 {
@@ -998,11 +1342,16 @@ void _emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uin
     else if (offset_flag == 0x80)
         bytes_push_int(code, offset, 4);
 }
-void emit_mov_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+void _impl_emit_mov_offset(int reg_d, int reg_s, int64_t offset, size_t size)
 {
     _emit_mov_offsetlike(reg_d, reg_s, offset, size, 0x8A, 0x8B);
 }
-void emit_mov(int reg_d, int reg_s, size_t size)
+void emit_mov_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    emitter_log_add_4(_impl_emit_mov_offset, reg_d, reg_s, offset, size);
+
+}
+void _impl_emit_mov(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
     
@@ -1027,34 +1376,63 @@ void emit_mov(int reg_d, int reg_s, size_t size)
     byte_push(code, 0xC0 | reg_d | (reg_s << 3));
     */
 }
+void emit_mov(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov, reg_d, reg_s, size);
+}
 
-void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
+
+void _impl_emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 {
     _emit_mov_offsetlike(reg_s, preg_d, 0, size, 0x88, 0x89);
 }
-void emit_mov_into_offset(int preg_d, int64_t offset, int reg_s, size_t size)
+void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov_preg_reg, preg_d, reg_s, size);
+}
+
+void _impl_emit_mov_into_offset(int preg_d, int64_t offset, int reg_s, size_t size)
 {
     _emit_mov_offsetlike(reg_s, preg_d, offset, size, 0x88, 0x89);
 }
-void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
+void emit_mov_into_offset(int preg_d, int64_t offset, int reg_s, size_t size)
+{
+    emitter_log_add_4(_impl_emit_mov_into_offset, preg_d, offset, reg_s, size);
+}
+
+void _impl_emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
 {
     _emit_mov_offsetlike(reg_d, preg_s, 0, size, 0x8A, 0x8B);
 }
+void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov_reg_preg, reg_d, preg_s, size);
+}
 
-void emit_push(int reg)
+
+void _impl_emit_push(int reg)
 {
     last_is_terminator = 0;
     byte_push(code, 0x50 | reg);
 }
-void emit_pop(int reg)
+void emit_push(int reg)
+{
+    emitter_log_add_1(_impl_emit_push, reg);
+}
+
+void _impl_emit_pop(int reg)
 {
     last_is_terminator = 0;
     byte_push(code, 0x58 | reg);
 }
+void emit_pop(int reg)
+{
+    emitter_log_add_1(_impl_emit_pop, reg);
+}
 
 // pushes 4 or 8 bytes (not 16 bytes) of an xmm register
 // stack always moves by 8 bytes
-void emit_xmm_push(int reg, int size)
+void _impl_emit_xmm_push(int reg, int size)
 {
     last_is_terminator = 0;
     
@@ -1080,7 +1458,12 @@ void emit_xmm_push(int reg, int size)
     byte_push(code, 0x04 | (reg << 3));
     byte_push(code, 0x24);
 }
-void emit_xmm_pop(int reg, int size)
+void emit_xmm_push(int reg, int size)
+{
+    emitter_log_add_2(_impl_emit_xmm_push, reg, size);
+}
+
+void _impl_emit_xmm_pop(int reg, int size)
 {
     last_is_terminator = 0;
     
@@ -1106,8 +1489,13 @@ void emit_xmm_pop(int reg, int size)
     byte_push(code, 0xC4);
     byte_push(code, 0x08);
 }
+void emit_xmm_pop(int reg, int size)
+{
+    emitter_log_add_2(_impl_emit_xmm_pop, reg, size);
+}
 
-void emit_shl(int reg, size_t size)
+
+void _impl_emit_shl(int reg, size_t size)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
@@ -1115,7 +1503,12 @@ void emit_shl(int reg, size_t size)
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xE0 | reg);
 }
-void emit_shr(int reg, size_t size)
+void emit_shl(int reg, size_t size)
+{
+    emitter_log_add_2(_impl_emit_shl, reg, size);
+}
+
+void _impl_emit_shr(int reg, size_t size)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
@@ -1123,7 +1516,12 @@ void emit_shr(int reg, size_t size)
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xE8 | reg);
 }
-void emit_sar(int reg, size_t size)
+void emit_shr(int reg, size_t size)
+{
+    emitter_log_add_2(_impl_emit_shr, reg, size);
+}
+
+void _impl_emit_sar(int reg, size_t size)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
@@ -1131,26 +1529,40 @@ void emit_sar(int reg, size_t size)
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xF8 | reg);
 }
+void emit_sar(int reg, size_t size)
+{
+    emitter_log_add_2(_impl_emit_sar, reg, size);
+}
 
-void emit_shl_imm(int reg, uint8_t imm, size_t size)
+void _impl_emit_shl_imm(int reg, uint8_t imm, size_t size)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
     
     byte_push(code, (size > 1) ? 0xC1 : 0xC1);
     byte_push(code, 0xE0 | reg);
+    byte_push(code, imm);
+}
+void emit_shl_imm(int reg, uint8_t imm, size_t size)
+{
+    emitter_log_add_3(_impl_emit_shl_imm, reg, imm, size);
+}
+
+void _impl_emit_shr_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xE8 | reg);
     byte_push(code, imm);
 }
 void emit_shr_imm(int reg, uint8_t imm, size_t size)
 {
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
-    byte_push(code, 0xE8 | reg);
-    byte_push(code, imm);
+    emitter_log_add_3(_impl_emit_shr_imm, reg, imm, size);
 }
-void emit_sar_imm(int reg, uint8_t imm, size_t size)
+
+void _impl_emit_sar_imm(int reg, uint8_t imm, size_t size)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
@@ -1158,6 +1570,10 @@ void emit_sar_imm(int reg, uint8_t imm, size_t size)
     byte_push(code, (size > 1) ? 0xC1 : 0xC1);
     byte_push(code, 0xF8 | reg);
     byte_push(code, imm);
+}
+void emit_sar_imm(int reg, uint8_t imm, size_t size)
+{
+    emitter_log_add_3(_impl_emit_sar_imm, reg, imm, size);
 }
 
 void _emit_mov_imm(int reg, uint64_t val, size_t size)
@@ -1168,11 +1584,15 @@ void _emit_mov_imm(int reg, uint64_t val, size_t size)
     byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
     bytes_push_int(code, (uint64_t)val, size);
 }
-void emit_mov_imm(int reg, uint64_t val, size_t size)
+void _impl_emit_mov_imm(int reg, uint64_t val, size_t size)
 {
     _emit_mov_imm(reg, val, size);
 }
-void emit_lea_rip_offset(int reg, int64_t offset)
+void emit_mov_imm(int reg, uint64_t val, size_t size)
+{
+    emitter_log_add_3(_impl_emit_mov_imm, reg, val, size);
+}
+void _impl_emit_lea_rip_offset(int reg, int64_t offset)
 {
     assert(offset >= -2147483648 && offset <= 2147483647);
     
@@ -1186,8 +1606,12 @@ void emit_lea_rip_offset(int reg, int64_t offset)
     byte_push(code, 0x05 | (reg << 3));
     bytes_push_int(code, (uint64_t)offset, 4);
 }
+void emit_lea_rip_offset(int reg, int64_t offset)
+{
+    emitter_log_add_2(_impl_emit_lea_rip_offset, reg, offset);
+}
 
-void emit_push_val(int64_t val)
+void _impl_emit_push_val(int64_t val)
 {
     last_is_terminator = 0;
     
@@ -1214,12 +1638,20 @@ void emit_push_val(int64_t val)
         bytes_push_int(code, ((uint64_t)val) >> 32, 4);
     }
 }
-void emit_breakpoint(void)
+void emit_push_val(int64_t val)
+{
+    emitter_log_add_1(_impl_emit_push_val, val);
+}
+void _impl_emit_breakpoint(void)
 {
     last_is_terminator = 0;
     byte_push(code, 0xCC);
 }
-void emit_lea(int reg_d, int reg_s, int64_t offset)
+void emit_breakpoint(void)
+{
+    emitter_log_add_0(_impl_emit_breakpoint);
+}
+void _impl_emit_lea(int reg_d, int reg_s, int64_t offset)
 {
     last_is_terminator = 0;
     _emit_mov_offsetlike(reg_d, reg_s, offset, 8,
@@ -1227,9 +1659,13 @@ void emit_lea(int reg_d, int reg_s, int64_t offset)
         0x8D // actual op
     );
 }
+void emit_lea(int reg_d, int reg_s, int64_t offset)
+{
+    emitter_log_add_3(_impl_emit_lea, reg_d, reg_s, offset);
+}
 // copy AL into RCX bytes of memory starting at RDI
 // thrashes RCX, RDI
-void emit_rep_stos(int chunk_size)
+void _impl_emit_rep_stos(int chunk_size)
 {
     last_is_terminator = 0;
     assert(chunk_size == 1 || chunk_size == 2 || chunk_size == 4 || chunk_size == 8);
@@ -1241,6 +1677,10 @@ void emit_rep_stos(int chunk_size)
         byte_push(code, 0x48);
     
     byte_push(code, (chunk_size == 1) ? 0xAA : 0xAB);
+}
+void emit_rep_stos(int chunk_size)
+{
+    emitter_log_add_1(_impl_emit_rep_stos, chunk_size);
 }
 // copy RCX bytes from RSI into RDI
 void _emit_rep_movs(int chunk_size)
@@ -1258,15 +1698,19 @@ void _emit_rep_movs(int chunk_size)
 }
 // registers must be pre-filled: RSI, RDI, RCX
 // thrashes RCX, RSI, RDI, DF (direction flag)
-void emit_rep_movs(int chunk_size)
+void _impl_emit_rep_movs(int chunk_size)
 {
     // CLD
     byte_push(code, 0xFC);
     _emit_rep_movs(chunk_size);
 }
+void emit_rep_movs(int chunk_size)
+{
+    emitter_log_add_1(_impl_emit_rep_movs, chunk_size);
+}
 // registers must be pre-filled: RSI, RDI
 // thrashes RCX, RSI, RDI, DF (direction flag)
-void emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
+void _impl_emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
 {
     if (direction_is_down)
         byte_push(code, 0xFD); // STD
@@ -1276,9 +1720,13 @@ void emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
      _emit_mov_imm(RCX, count, 8);
      _emit_rep_movs(chunk_size);
 }
+void emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
+{
+    emitter_log_add_3(_impl_emit_memcpy_static, count, chunk_size, direction_is_down);
+}
 // registers must be pre-filled: RSI, RDI, RCX
 // thrashes RCX, RSI, RDI, DF (direction flag)
-void emit_memcpy_dynamic(int chunk_size, int direction_is_down)
+void _impl_emit_memcpy_dynamic(int chunk_size, int direction_is_down)
 {
     if (direction_is_down)
         byte_push(code, 0xFD); // STD
@@ -1287,7 +1735,11 @@ void emit_memcpy_dynamic(int chunk_size, int direction_is_down)
      
      _emit_rep_movs(chunk_size);
 }
-void emit_call(int reg)
+void emit_memcpy_dynamic(int chunk_size, int direction_is_down)
+{
+    emitter_log_add_2(_impl_emit_memcpy_dynamic, chunk_size, direction_is_down);
+}
+void _impl_emit_call(int reg)
 {
     last_is_terminator = 0;
     assert(reg <= R15);
@@ -1296,4 +1748,303 @@ void emit_call(int reg)
     byte_push(code, 0xFF);
     reg &= 7;
     byte_push(code, 0xD0 | reg);
+}
+void emit_call(int reg)
+{
+    emitter_log_add_1(_impl_emit_call, reg);
+}
+
+
+void emitter_log_apply(EmitterLog * log)
+{
+    if (log->funcptr == (void *)_impl_emit_jmp_short)
+        _impl_emit_jmp_short((char *)log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_jmp_cond_short)
+        _impl_emit_jmp_cond_short((char *)log->args[0], log->args[1], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_jmp_long)
+        _impl_emit_jmp_long((char *)log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_jmp_cond_long)
+        _impl_emit_jmp_cond_long((char *)log->args[0], log->args[1], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_nop)
+        _impl_emit_nop(log->args[0]);
+    
+    else if (log->funcptr == (void *)_impl_emit_label)
+        _impl_emit_label((char *)log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_ret)
+        _impl_emit_ret();
+    
+    else if (log->funcptr == (void *)_impl_emit_sub_imm)
+        _impl_emit_sub_imm(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_sub_imm32)
+        _impl_emit_sub_imm32(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_add_imm)
+        _impl_emit_add_imm(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_add_imm32)
+        _impl_emit_add_imm32(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_add)
+        _impl_emit_add(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_sub)
+        _impl_emit_sub(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_cmp)
+        _impl_emit_cmp(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_test)
+        _impl_emit_test(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_xor)
+        _impl_emit_xor(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_and)
+        _impl_emit_and(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_or)
+        _impl_emit_or(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mul)
+        _impl_emit_mul(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_imul)
+        _impl_emit_imul(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_div)
+        _impl_emit_div(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_idiv)
+        _impl_emit_idiv(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_neg)
+        _impl_emit_neg(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_not)
+        _impl_emit_not(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_float_mul)
+        _impl_emit_float_mul(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_float_div)
+        _impl_emit_float_div(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_float_add)
+        _impl_emit_float_add(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_float_sub)
+        _impl_emit_float_sub(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_float_sqrt)
+        _impl_emit_float_sqrt(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_xorps)
+        _impl_emit_xorps(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_bts)
+        _impl_emit_bts(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_bt)
+        _impl_emit_bt(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_compare_float)
+        _impl_emit_compare_float(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_cast_float_to_int)
+        _impl_emit_cast_float_to_int(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
+    else if (log->funcptr == (void *)_impl_emit_cast_int_to_float)
+        _impl_emit_cast_int_to_float(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
+    else if (log->funcptr == (void *)_impl_emit_cast_float_to_float)
+        _impl_emit_cast_float_to_float(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
+    else if (log->funcptr == (void *)_impl_emit_zero_extend)
+        _impl_emit_zero_extend(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_sign_extend)
+        _impl_emit_sign_extend(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_cmov)
+        _impl_emit_cmov(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
+    else if (log->funcptr == (void *)_impl_emit_cset)
+        _impl_emit_cset(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_xmm_from_base)
+        _impl_emit_mov_xmm_from_base(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_base_from_xmm)
+        _impl_emit_mov_base_from_xmm(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_xmm_xmm)
+        _impl_emit_mov_xmm_xmm(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_offset)
+        _impl_emit_mov_offset(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov)
+        _impl_emit_mov(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_preg_reg)
+        _impl_emit_mov_preg_reg(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_into_offset)
+        _impl_emit_mov_into_offset(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_reg_preg)
+        _impl_emit_mov_reg_preg(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_push)
+        _impl_emit_push(log->args[0]);
+    
+    else if (log->funcptr == (void *)_impl_emit_pop)
+        _impl_emit_pop(log->args[0]);
+    
+    else if (log->funcptr == (void *)_impl_emit_xmm_push)
+        _impl_emit_xmm_push(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_xmm_pop)
+        _impl_emit_xmm_pop(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_shl)
+        _impl_emit_shl(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_shr)
+        _impl_emit_shr(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_sar)
+        _impl_emit_sar(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_shl_imm)
+        _impl_emit_shl_imm(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_shr_imm)
+        _impl_emit_shr_imm(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_sar_imm)
+        _impl_emit_sar_imm(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_mov_imm)
+        _impl_emit_mov_imm(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_lea_rip_offset)
+        _impl_emit_lea_rip_offset(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_push_val)
+        _impl_emit_push_val(log->args[0]);
+    
+    else if (log->funcptr == (void *)_impl_emit_breakpoint)
+        _impl_emit_breakpoint();
+    
+    else if (log->funcptr == (void *)_impl_emit_lea)
+        _impl_emit_lea(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_rep_stos)
+        _impl_emit_rep_stos(log->args[0]);
+    
+    else if (log->funcptr == (void *)_impl_emit_rep_movs)
+        _impl_emit_rep_movs(log->args[0]);
+    
+    else if (log->funcptr == (void *)_impl_emit_memcpy_static)
+        _impl_emit_memcpy_static(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_memcpy_dynamic)
+        _impl_emit_memcpy_dynamic(log->args[0], log->args[1]);
+    
+    else if (log->funcptr == (void *)_impl_emit_call)
+        _impl_emit_call(log->args[0]);
+    
+    else
+    {
+        printf("_impl_emit_jmp_short: %p\n", (void *)_impl_emit_jmp_short);
+        printf("_impl_emit_cmp: %p\n", (void *)_impl_emit_cmp);
+        printf("_impl_emit_float_sub: %p\n", (void *)_impl_emit_float_sub);
+        printf("_impl_emit_cast_float_to_float: %p\n", (void *)_impl_emit_cast_float_to_float);
+        printf("_impl_emit_mov_xmm_xmm: %p\n", (void *)_impl_emit_mov_xmm_xmm);
+        printf("_impl_emit_shl: %p\n", (void *)_impl_emit_shl);
+        printf("_impl_emit_call: %p\n", (void *)_impl_emit_call);
+        printf("%p\n", log->funcptr);
+        assert(("asdfklasdfl unknown emitter", 0));
+    }
+}
+
+uint8_t emitter_log_try_optimize(void)
+{
+    if (emitter_log_size >= 2)
+    {
+        EmitterLog * log_prev = emitter_log_get_nth(1);
+        EmitterLog * log_next = emitter_log_get_nth(0);
+        
+        // FIXME give pushes and pops sizes so i can do this correctly
+        if (log_prev->funcptr == (void *)_impl_emit_push_val &&
+            log_next->funcptr == (void *)_impl_emit_pop)
+        {
+            uint64_t reg = emitter_log_erase_nth(0)->args[0];
+            int64_t val = emitter_log_erase_nth(0)->args[0];
+            if (val >= (-128) && val <= 127)
+            {
+                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 1);
+                emitter_log_add_3(_impl_emit_sign_extend, reg, 8, 1);
+            }
+            else if (val >= (-0x8000) && val <= 0x7FFF)
+            {
+                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 2);
+                emitter_log_add_3(_impl_emit_sign_extend, reg, 8, 2);
+            }
+            else if (val >= (-0x80000000) && val <= 0x7FFFFFFF)
+                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 4);
+            else
+                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 8);
+            return 1;
+        }
+        
+        if (log_prev->funcptr == (void *)_impl_emit_push &&
+            log_next->funcptr == (void *)_impl_emit_pop &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != RSP &&
+            log_next->args[0] != RSP)
+        {
+            uint64_t reg_d = emitter_log_erase_nth(0)->args[0];
+            uint64_t reg_s = emitter_log_erase_nth(0)->args[0];
+            emitter_log_add_3(_impl_emit_mov, reg_d, reg_s, 8);
+            return 1;
+        }
+        
+        if (log_prev->funcptr == (void *)_impl_emit_push &&
+            log_next->funcptr == (void *)_impl_emit_pop &&
+            log_prev->args[0] == log_next->args[0])
+        {
+            emitter_log_erase_nth(0);
+            emitter_log_erase_nth(0);
+            return 1;
+        }
+        
+        if (log_prev->funcptr == (void *)_impl_emit_push &&
+            log_next->funcptr == (void *)_impl_emit_mov &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != log_next->args[1] &&
+            log_prev->args[0] != RSP &&
+            log_next->args[0] != RSP &&
+            log_next->args[1] != RSP)
+        {
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            EmitterLog * push = emitter_log_erase_nth(0);
+            emitter_log_add(mov);
+            emitter_log_add(push);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void emitter_log_optimize(void)
+{
+    while (emitter_log_try_optimize()) {}
 }
