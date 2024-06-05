@@ -16,5 +16,10 @@ void main()
 	print_float((-0.2f32 / -4.0f32) as f64);
 	print_float(( 0.2f32 / -4.0f32) as f64);
 	print_float(( 0.2f32 /  4.0f32) as f64);
+	
+    constexpr f64 PI = 3.141592653589793f64;
+    print_float(3.14f64);
+    print_float(PI);
+    
 	return;
 }

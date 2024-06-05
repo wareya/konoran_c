@@ -2076,7 +2076,7 @@ FuncDef * current_funcdef = 0;
 
 void compile_code(Node * ast, int want_ptr)
 {
-    printf("code len before token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
+    //printf("code len before token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
     current_node = ast;
     switch (ast->type)
     {
@@ -2275,7 +2275,7 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     stack_push_new(var->val);
                     printf("rvar is const...? %d\n", var->val->kind == VAL_CONSTANT);
-                    printf("__ __ -!_ -> %zd %p\n", var->val->loc, (void *)var->val->mem);
+                    printf("__ __ -!_ -> %zd %zd %p\n", var->val->_val, var->val->loc, (void *)var->val->mem);
                 }
                 else
                 {
@@ -2426,12 +2426,12 @@ void compile_code(Node * ast, int want_ptr)
             case FUNCARGS:
             {
                 size_t stack_offset_at_funcptr = stack_offset;
-                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
-                printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
+                //printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                //printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
                 //emit_pop_safe(RAX);
                 
                 Value * expr = stack_pop()->val;
-                printf("%s %d\n", expr->type->name, expr->type->variant);
+                //printf("%s %d\n", expr->type->name, expr->type->variant);
                 assert(("tried to call non-function", expr->type->variant == TYPE_FUNCPOINTER));
                 
                 FuncDef * funcdef = expr->type->funcdef;
@@ -2624,8 +2624,8 @@ void compile_code(Node * ast, int want_ptr)
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
                 
-                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
-                printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
+                //printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                //printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
             } break;
             case ARRAYINDEX:
             {
@@ -3165,8 +3165,11 @@ void compile_code(Node * ast, int want_ptr)
         assert(types_same(type, val->val->type));
         
         Variable * var = add_local(name_text, type);
-        var->val->kind = VAL_CONSTANT;
+        var->val = val->val;
+        //var->val->kind = VAL_CONSTANT;
         var->val->loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
+        
+        //printf("!!!!---!- const data... %zX 0x%zd %td\n", val->val->_val, var->val->loc, val->val->type->size);
     } break;
     case DECLARATION:
     case FULLDECLARATION:
@@ -3863,7 +3866,7 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case NFLOAT:
     {
-        puts("compiling float literal...");
+        //puts("compiling float literal...");
         
         size_t len = ast->textlen;
         assert(ast->textlen >= 5);
@@ -3902,10 +3905,10 @@ void compile_code(Node * ast, int want_ptr)
             compile_unary_addrof(ast);
         else
         {
-            puts("compiling unary child...");
+            //puts("compiling unary child...");
             assert(nth_child(ast, 1));
             compile_code(nth_child(ast, 1), 0);
-            puts("compiled unary child!");
+            //puts("compiled unary child!");
             
             StackItem * val = stack_pop();
             assert(val);
@@ -4106,7 +4109,7 @@ void compile_code(Node * ast, int want_ptr)
         printf("unhandled code AST node type %d (line %zu column %zu)\n", ast->type, ast->line, ast->column);
         assert(0);
     }
-    printf("code len after token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
+    //printf("code len after token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
 }
 
 void compile_defs_compile(Node * ast)

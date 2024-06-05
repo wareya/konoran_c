@@ -7,6 +7,20 @@ struct Body {
     Vec pos;
 }
 
+Vec vec_sub_vec(Vec a, Vec b)
+{
+    a.x = a.x - b.x;
+    return a;
+}
+
+void print_nth(ptr(array(Vec, 2)) bodies, i64 n)
+{
+    print_float((*bodies)[n].x);
+    (*bodies)[n].x = (*bodies)[n].x * (*bodies)[n].x;
+    print_float((*bodies)[n].x);
+    return;
+}
+
 void main()
 {
     array(Vec, 2) bodies = [
@@ -15,6 +29,11 @@ void main()
     ];
     
     print_float(bodies[1i64].x);
+    print_nth(&bodies, 1i64);
+    print_nth(&bodies, 1i64);
+    print_nth(&bodies, 1i64);
+    bodies[1i64] = vec_sub_vec(bodies[1i64], bodies[1i64]);
+    print_nth(&bodies, 1i64);
     
     return;
 }
