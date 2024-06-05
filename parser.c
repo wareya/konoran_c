@@ -211,19 +211,19 @@ size_t furthest_ever_parse_line = 0;
 size_t furthest_ever_parse_column = 0;
 Token * furthest_ever_parse_token = 0;
 
-void check_furthest(Node * node, Token * token)
+void check_furthest(Node * node, Token * current_token, Token * next_token)
 {
-    if (node && token)
+    if (node && current_token)
     {
-        node->line = token->line;
-        node->column = token->column;
+        node->line = current_token->line;
+        node->column = current_token->column;
     }
-    if (token && token->text > furthest_ever_parse)
+    if (next_token && next_token->text > furthest_ever_parse)
     {
-        furthest_ever_parse = token->text;
-        furthest_ever_parse_line = token->line;
-        furthest_ever_parse_column = token->column;
-        furthest_ever_parse_token = token;
+        furthest_ever_parse = next_token->text;
+        furthest_ever_parse_line = next_token->line;
+        furthest_ever_parse_column = next_token->column;
+        furthest_ever_parse_token = next_token;
     }
 }
 
@@ -235,7 +235,7 @@ Node * parse_as_text(Token * tokens, char * text, Token ** next_tokens)
         root->text = tokens->text;
         root->textlen = tokens->len;
         *next_tokens = tokens->next;
-        check_furthest(root, *next_tokens);
+        check_furthest(root, tokens, *next_tokens);
         return root;
     }
     return NULL;
@@ -268,7 +268,7 @@ Node * parse_as_token_form(Token * tokens, int form, Token ** next_tokens)
         root->text = tokens->text;
         root->textlen = tokens->len;
         *next_tokens = tokens->next;
-        check_furthest(root, *next_tokens);
+        check_furthest(root, tokens, *next_tokens);
         return root;
     }
     return NULL;
@@ -278,7 +278,7 @@ uint8_t does_parse_as_text(Token * tokens, char * text, Token ** next_tokens)
     if (token_is_exact(tokens, text))
     {
         *next_tokens = tokens->next;
-        check_furthest(0, *next_tokens);
+        check_furthest(0, tokens, *next_tokens);
         return 1;
     }
     return 0;
@@ -291,7 +291,7 @@ Node * parse_as(Token * tokens, int type, Token ** next_tokens)
 {
     Node * node = parse_as_impl(tokens, type, next_tokens);
     if (node && next_tokens)
-        check_furthest(node, *next_tokens);
+        check_furthest(node, tokens, *next_tokens);
     return node;
 }
 Node * parse_as_impl(Token * tokens, int type, Token ** next_tokens)

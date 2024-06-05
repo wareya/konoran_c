@@ -4,6 +4,13 @@
 #include <math.h> // remainder, remainderf
 #include "buffers.h"
 
+__attribute__((noreturn))
+void crash(void)
+{
+    __asm__("int3");
+    while(1);
+}
+
 byte_buffer * code = 0;
 byte_buffer * static_data = 0;
 byte_buffer * global_data = 0;
@@ -20,8 +27,19 @@ void free_compiler_buffers(void)
 }
 
 #include "code_emitter.c"
-
 #include "abi_handler.h"
+
+Node * current_node = 0;
+#undef assert
+#define assert(X) \
+     ((!(X)) \
+      ?((current_node \
+         ? fprintf(stderr, "Error on line %zu column %zu\n", current_node->line, current_node->column), ((void)0) \
+         : ((void)0)), \
+        fprintf(stderr, "Assertion failed: %s\n", #X), \
+        fprintf(stderr, "In file `%s`, on line %d\n", (__FILE__), (int)(__LINE__)), \
+        crash(), ((void)0)) \
+      : ((void)0))
 
 union KonoranCMaxAlignT
 {
@@ -273,6 +291,10 @@ uint8_t type_is_pointer(Type * type)
 {
     return type->variant == TYPE_POINTER;
 }
+uint8_t type_is_funcpointer(Type * type)
+{
+    return type->variant == TYPE_FUNCPOINTER;
+}
 uint8_t type_is_struct(Type * type)
 {
     return type->variant == TYPE_STRUCT;
@@ -281,7 +303,12 @@ uint8_t type_is_array(Type * type)
 {
     return type->variant == TYPE_ARRAY;
 }
+uint8_t type_is_composite(Type * type)
+{
+    return type_is_struct(type) || type_is_array(type);
+}
 
+uint8_t func_sigs_match(struct _FuncDef * a, struct _FuncDef * b);
 uint8_t types_same(Type * a, Type * b)
 {
     if (a == b)
@@ -289,7 +316,12 @@ uint8_t types_same(Type * a, Type * b)
     if (a->size != b->size || a->variant != b->variant || a->primitive_type != b->primitive_type || strcmp(a->name, b->name) != 0)
         return 0;
     if (type_is_pointer(a) && type_is_pointer(b))
-        return a->inner_type == b->inner_type;
+        return types_same(a->inner_type, b->inner_type);
+    if (type_is_funcpointer(a) && type_is_funcpointer(b))
+        return func_sigs_match(a->funcdef, b->funcdef);
+    if (type_is_array(a) && type_is_array(b))
+        return a->inner_count == b->inner_count && types_same(a->inner_type, b->inner_type);
+    printf("%s, %s\n", a->name, b->name);
     puts("TODO compare types");
     assert(0);
 }
@@ -331,7 +363,8 @@ Type * make_array_type(Type * inner, uint64_t count)
     Type * outer = new_type("array", TYPE_ARRAY);
     outer->inner_type = inner;
     outer->inner_count = count;
-    outer->size = inner->size * count;
+    size_t inner_size = guess_aligned_size_from_size(inner->size);
+    outer->size = inner_size * count;
     
     list_add(&array_types, outer);
     
@@ -544,8 +577,10 @@ typedef struct _StackItem
 
 StackItem * stack = 0;
 
+size_t eval_stack_height = 0;
 StackItem * stack_push(StackItem * item)
 {
+    eval_stack_height += 1;
     item->next = stack;
     stack = item;
     return item;
@@ -573,9 +608,21 @@ StackItem * stack_peek(void)
 {
     return stack;
 }
+StackItem * stack_peek_nth_down(size_t n)
+{
+    StackItem * item = stack;
+    while (item && n)
+    {
+        item = item->next;
+        n -= 1;
+    }
+    return item;
+}
 StackItem * stack_pop(void)
 {
-    if (!stack) return 0;
+    assert(stack);
+    //if (!stack) return 0;
+    eval_stack_height -= 1;
     StackItem * item = stack;
     stack = item->next;
     item->next = 0;
@@ -605,6 +652,28 @@ typedef struct _FuncDef
     uint8_t is_import; // if true, code_offset is a raw function pointer
     struct _FuncDef * next;
 } FuncDef;
+
+uint8_t func_sigs_match(FuncDef * a, FuncDef * b)
+{
+    if (a == b)
+        return 1;
+    if (a->num_args != b->num_args)
+        return 0;
+    
+    GenericList * a_sig = a->signature;
+    GenericList * b_sig = b->signature;
+    while (a_sig && b_sig)
+    {
+        Type * type_a = a_sig->item;
+        Type * type_b = b_sig->item;
+        if (!types_same(type_a, type_b))
+            return 0;
+        
+        a_sig = a_sig->next;
+        b_sig = b_sig->next;
+    }
+    return a_sig == b_sig;
+}
 
 Type * parse_type(Node * ast)
 {
@@ -792,6 +861,7 @@ void add_funcimport(char * name, char * sigtext, void * ptr)
 
 void compile_defs_collect(Node * ast)
 {
+    current_node = ast;
     // collect struct definitions and function definitions/declarations
     switch (ast->type)
     {
@@ -1006,12 +1076,15 @@ void emit_xmm_pop_safe(int reg1, int size)
 
 void emit_expand_stack_safe(int64_t amount)
 {
+    printf("expanding stack by %zu\n", amount);
     assert(amount >= 0 && amount <= 2147483647);
     emit_sub_imm(RSP, amount);
     stack_offset += amount;
 }
 void emit_shrink_stack_safe(int64_t amount)
 {
+    printf("shrinking stack by %zu\n", amount);
+    //printf("%zu vs %zu\n", stack_offset, amount);
     assert(stack_offset >= amount);
     assert(amount >= 0 && amount <= 2147483647);
     emit_add_imm(RSP, amount);
@@ -1020,10 +1093,10 @@ void emit_shrink_stack_safe(int64_t amount)
 
 void _push_small_if_const(Value * item)
 {
-    if (item->kind == VAL_CONSTANT)
+    if (item->kind == VAL_CONSTANT && !item->mem && !item->loc)
     {
-        assert(!item->mem);
-        assert(!item->loc);
+        //assert(!item->mem);
+        //assert(!item->loc);
         assert(item->type->size <= 8);
         emit_push_val_safe(item->_val);
     }
@@ -1042,9 +1115,10 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
 {
     if (left->val->type->variant == TYPE_POINTER)
     {
-        if (op == '+')
+        if (op == '+' || op == '-' || op == '&')
         {
-            assert(right->val->type->primitive_type == PRIM_U64);
+            //assert(right->val->type->primitive_type == PRIM_U64);
+            assert(!type_is_signed(right->val->type));
             
             _push_small_if_const(right->val);
             emit_pop_safe(RDX);
@@ -1053,7 +1127,12 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             
             left->val->kind = VAL_STACK_TOP;
             
-            emit_add(RAX, RDX, 8);
+            if (op == '+')
+                emit_add(RAX, RDX, 8);
+            else if (op == '-')
+                emit_add(RAX, RDX, 8);
+            else if (op == '&')
+                emit_and(RAX, RDX, 8);
             emit_push_safe(RAX);
             
             stack_push_new_top(left->val->type);
@@ -1315,6 +1394,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_idiv(RDI, size);
             else
                 emit_div(RDI, size);
+            
             if (is_div)
                 emit_push_safe(RAX);
             else
@@ -1325,7 +1405,8 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_jmp_short(0, label_anon_num + 1);
                 
                 emit_label(0, label_anon_num);
-                emit_push_safe(RDI);
+                // paired with the above emit_push_safe calls
+                emit_push(RDI);
                 
                 emit_label(0, label_anon_num + 1);
                 label_anon_num += 2;
@@ -1715,14 +1796,42 @@ void compile_unary_addrof(Node * ast)
 {
     compile_code(nth_child(ast, 1), WANT_PTR_REAL);
     StackItem * inspect = stack_pop();
-    assert(inspect->val->type->variant == TYPE_POINTER);
-    stack_push(inspect);
+    assert(inspect);
+    Value * val = inspect->val;
+    Type * type = val->type;
+    if (type_is_pointer(type))
+        stack_push(inspect);
+    else if (type_is_composite(type) && val->kind == VAL_STACK_TOP)
+    {
+        size_t align = guess_alignment_from_size(type->size);
+        stack_loc += type->size;
+        while (stack_loc % align)
+            stack_loc++;
+        
+        size_t size = guess_stack_size_from_size(type->size);
+        emit_lea(RDI, RBP, -stack_loc);
+        emit_mov(RAX, RDI, 8);
+        emit_mov(RSI, RSP, 8);
+        emit_memcpy_static(type->size, 1, 0);
+        emit_shrink_stack_safe(size);
+        
+        emit_push_safe(RAX);
+        stack_push_new_top(make_ptr_type(type));
+    }
+    else
+        assert(("cannot take address of non-composite values", 0));
 }
 void compile_unary_plus(StackItem * val)
 {
     assert(val->val->type->variant == TYPE_PRIMITIVE);
     assert(val->val->type->primitive_type >= PRIM_U8);
     assert(val->val->type->primitive_type <= PRIM_F64);
+    stack_push(val);
+}
+void compile_unary_volatile(StackItem * val)
+{
+    assert(type_is_pointer(val->val->type));
+    // TODO/FIXME: flush mem2reg optimizations (once added)
     stack_push(val);
 }
 void compile_unary_minus(StackItem * val)
@@ -1772,15 +1881,41 @@ void compile_unary_not(StackItem * val)
         val->val->type = get_type("u8");
         stack_push(val);
     }
+    else if (type_is_pointer(val->val->type))
+    {
+        emit_pop_safe(RAX);
+        emit_test(RAX, RAX, val->val->type->size);
+        emit_cset(RAX, J_EQ);
+        emit_push_safe(RAX);
+        
+        stack_push(val);
+    }
     else
-        assert(("FIXME TODO ! op for pointers", 0));
+        assert(("op ! is only supported for ints and pointers", 0));
+}
+void compile_unary_bitnot(StackItem * val)
+{
+    if (val->val->type->variant == TYPE_PRIMITIVE)
+    {
+        assert(val->val->type->primitive_type >= PRIM_U8);
+        assert(val->val->type->primitive_type <= PRIM_I64);
+        
+        emit_pop_safe(RAX);
+        emit_not(RAX, val->val->type->size);
+        emit_push_safe(RAX);
+        
+        stack_push(val);
+    }
+    else
+        assert(("op ~ only supported on integers", 0));
 }
 
 Type * return_type = 0;
+FuncDef * current_funcdef = 0;
 
 void compile_code(Node * ast, int want_ptr)
 {
-    printf("-- compiling a %d\n", ast->type);
+    current_node = ast;
     switch (ast->type)
     {
     case RETURN:
@@ -1790,25 +1925,50 @@ void compile_code(Node * ast, int want_ptr)
         if (ast->first_child)
             compile_code(ast->first_child, 0);
         
-        StackItem * expr = stack_pop();
+        StackItem * expr = stack_peek();
         if (!expr)
             assert(return_type == get_type("void"));
         else
         {
-            _push_small_if_const(expr->val);
-            assert(types_same(return_type, expr->val->type));
-            assert(return_type->size <= 8);
-            if (type_is_float(expr->val->type))
+            expr = stack_pop();
+            Value * val = expr->val;
+            assert(types_same(return_type, val->type));
+            if (type_is_composite(return_type))
+            {
+                Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
+                assert(("internal error: return slot variable for composite type return not found", var));
+                emit_mov_offset(RDI, RBP, -var->val->loc, 8);
+                if (val->kind == VAL_CONSTANT)
+                {
+                    assert(("TODO: const composite returns", 0));
+                }
+                else if (val->kind == VAL_STACK_TOP)
+                {
+                    size_t size = guess_stack_size_from_size(val->type->size);
+                    emit_mov(RSI, RSP, 8);
+                    emit_memcpy_static(val->type->size, 1, 0);
+                    emit_shrink_stack_safe(size);
+                }
+                else
+                    assert(("TODO: unknown type of composite return", 0));
+            }
+            else if (type_is_float(return_type))
+            {
+                _push_small_if_const(val);
                 emit_xmm_pop_safe(XMM0, 8);
-            else if (!type_is_void(expr->val->type))
+            }
+            else if (!type_is_void(return_type))
+            {
+                _push_small_if_const(val);
                 emit_pop_safe(RAX);
+            }
         }
         
         printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
         emit_add_imm32(RSP, stack_loc);
-        log_stack_size_usage(code->len - 4);
+        log_stack_size_usage(emitter_get_code_len() - 4);
         emit_pop(RBP);
         //emit_breakpoint();
         emit_ret();
@@ -1823,9 +1983,71 @@ void compile_code(Node * ast, int want_ptr)
         char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
         emit_jmp_long(text, 0);
     } break;
+    case INTRINSIC:
+    {
+        // only supported intrinsics are sqrt and sqrt_f32
+        char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
+        Node * args = nth_child(ast, 1)->first_child;
+        
+        assert(args->childcount == 1);
+        compile_code(args->first_child, 0);
+        StackItem * item = stack_pop();
+        assert(item);
+        Value * argval = item->val;
+        
+        if (strcmp(text, "sqrt") == 0)
+        {
+            assert(types_same(argval->type, get_type("f64")));
+            if (argval->kind == VAL_CONSTANT)
+            {
+                double f = 0.0;
+                memcpy(&f, &argval->_val, sizeof(double));
+                f = sqrt(f);
+                memcpy(&argval->_val, &f, sizeof(double));
+                stack_push(item);
+            }
+            else
+            {
+                assert(argval->kind == VAL_STACK_TOP);
+                emit_xmm_pop_safe(XMM0, 8);
+                emit_float_sqrt(XMM0, XMM0, 8);
+                emit_xmm_push_safe(XMM0, 8);
+                stack_push(item);
+            }
+        }
+        else if (strcmp(text, "sqrt_f32") == 0)
+        {
+            assert(types_same(argval->type, get_type("f32")));
+            if (argval->kind == VAL_CONSTANT)
+            {
+                float f = 0.0;
+                memcpy(&f, &argval->_val, sizeof(float));
+                f = sqrtf(f);
+                memcpy(&argval->_val, &f, sizeof(float));
+                stack_push(item);
+            }
+            else
+            {
+                assert(argval->kind == VAL_STACK_TOP);
+                emit_xmm_pop_safe(XMM0, 4);
+                emit_float_sqrt(XMM0, XMM0, 4);
+                emit_xmm_push_safe(XMM0, 4);
+                stack_push(item);
+            }
+        }
+        else
+        {
+            printf("culprit: %s\n", text);
+            assert(("unsupported intrinsic!", 0));
+        }
+    } break;
     case RVAR_NAME:
     {
-        printf("in RVAR_NAME!! want pointer... %d codelen %zX...\n", want_ptr, code->len);
+        if (0)
+        {
+            size_t len = emitter_get_code_len();
+            printf("in RVAR_NAME!! want pointer... %d codelen %zX...\n", want_ptr, len);
+        }
         Variable * var = 0;
         FuncDef * funcdef = 0;
         char * name_text = strcpy_len(ast->text, ast->textlen);
@@ -1835,26 +2057,32 @@ void compile_code(Node * ast, int want_ptr)
             
             assert(var->val->kind == VAL_STACK_BOTTOM);
             
-            if (want_ptr != 0)
+            if (want_ptr != 0 && !(want_ptr == WANT_PTR_VIRTUAL && type_is_funcpointer(type)))
             {
                 type = make_ptr_type(type);
                 emit_lea(RAX, RBP, -var->val->loc);
-                puts("emitting LEA...");
                 
                 emit_push_safe(RAX);
-                Value * value = new_value(make_ptr_type(type));
+                Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
             }
             else
             {
-                // FIXME aggregates
-                assert(var->val->type->size <= 8);
-                
-                emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
-                
-                printf("emitting mov with offset of %zd...\n", -var->val->loc);
-                emit_push_safe(RAX);
+                if (!type_is_composite(var->val->type))
+                {
+                    //printf("emitting mov with offset of %zd...\n", -var->val->loc);
+                    emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
+                    emit_push_safe(RAX);
+                }
+                else
+                {
+                    size_t size = guess_stack_size_from_size(type->size);
+                    emit_expand_stack_safe(size);
+                    emit_lea(RSI, RBP, -var->val->loc);
+                    emit_mov(RDI, RSP, 8);
+                    emit_memcpy_static(type->size, 1, 0);
+                }
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
@@ -1868,9 +2096,9 @@ void compile_code(Node * ast, int want_ptr)
             emit_mov_imm(RAX, var->val->loc, 8);
             
             if (var->val->kind == VAL_GLOBAL)
-                log_global_relocation(code->len - 8, var->val->loc);
+                log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
             else if (var->val->kind == VAL_CONSTANT)
-                log_static_relocation(code->len - 8, var->val->loc);
+                log_static_relocation(emitter_get_code_len() - 8, var->val->loc);
             
             if (want_ptr == 0)
             {
@@ -1896,7 +2124,7 @@ void compile_code(Node * ast, int want_ptr)
             else
             {
                 emit_lea_rip_offset(RAX, 0);
-                log_symbol_relocation(code->len - 4, name_text);
+                log_symbol_relocation(emitter_get_code_len() - 4, name_text);
                 emit_push_safe(RAX);
             }
             
@@ -1936,7 +2164,7 @@ void compile_code(Node * ast, int want_ptr)
             if (var->val->kind == VAL_GLOBAL)
             {
                 emit_mov_imm(RAX, var->val->loc, 8);
-                log_global_relocation(code->len - 8, var->val->loc);
+                log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
                 emit_push_safe(RAX);
                 
                 Value * value = new_value(var->val->type);
@@ -1956,14 +2184,18 @@ void compile_code(Node * ast, int want_ptr)
         size_t i = 1;
         Node * next = nth_child(ast, i);
         
+        uint8_t old_want_ptr = want_ptr;
+        
         while (next)
         {
+            want_ptr = nth_child(ast, i + 1) ? WANT_PTR_VIRTUAL : old_want_ptr;
             switch (next->type)
             {
             case FUNCARGS:
             {
                 size_t stack_offset_at_funcptr = stack_offset;
-                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset_at_funcptr);
+                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
                 //emit_pop_safe(RAX);
                 
                 Value * expr = stack_pop()->val;
@@ -1974,20 +2206,20 @@ void compile_code(Node * ast, int want_ptr)
                 Type * callee_return_type = funcdef->signature->item;
                 GenericList * arg = funcdef->signature->next;
                 
-                // TODO: Struct and array arguments need space underneath the arg list,
-                //  because they're passed as pointers to temporary on-stack storage.
-                // We need to somehow allocate this ahead of time, *before* compiling each
-                //  subexpression.
-                // Second copy of stack_loc, tracking the maximum amount of memory needed to
-                //  be passed to functions as pointers...?
-                
+                // for aggregates, which are passed by pointer
+                int64_t arg_storage_size = 0;
                 // points to left side of last arg, from the left, from RBP as seen inside callee
                 int64_t arg_stack_size = abi_get_min_stack_size();
                 abi_reset_state();
                 GenericList * argwheres = 0;
                 while (arg)
                 {
-                    int64_t where = abi_get_next(type_is_float(arg->item));
+                    Type * type = arg->item;
+                    
+                    if (type_is_composite(type))
+                        arg_storage_size += guess_stack_size_from_size(type->size);
+                    
+                    int64_t where = abi_get_next(type_is_float(type));
                     list_add(&argwheres, (void *)where);
                     
                     if (-where > arg_stack_size)
@@ -1995,6 +2227,9 @@ void compile_code(Node * ast, int want_ptr)
                     
                     arg = arg->next;
                 }
+                while (arg_storage_size % 16)
+                    arg_storage_size += 1;
+                
                 printf("stack size before %zd\n", arg_stack_size);
                 arg_stack_size += 8; // get pointer on right side of last arg, not left side
                 arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
@@ -2005,9 +2240,9 @@ void compile_code(Node * ast, int want_ptr)
                 
                 printf("stack size after %zd\n", arg_stack_size);
                 
-                emit_expand_stack_safe(arg_stack_size);
+                emit_expand_stack_safe(arg_storage_size + arg_stack_size);
                 
-                //abi_reset_state();
+                ptrdiff_t arg_storage_used = 0;
                 arg = funcdef->signature->next;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
                 while (arg)
@@ -2020,8 +2255,33 @@ void compile_code(Node * ast, int want_ptr)
                     StackItem * item = stack_pop();
                     assert(item);
                     Value * arg_expr = item->val;
-                    assert(arg_expr->type == type);
-                    _push_small_if_const(arg_expr);
+                    //printf("%s vs %s\n", arg_expr->type->name, type->name);
+                    
+                    //if (type_is_pointer(arg_expr->type) && type_is_pointer(type))
+                    //    printf("%s vs %s\n", arg_expr->type->inner_type->name, type->inner_type->name);
+                    
+                    assert(types_same(arg_expr->type, type));
+                    
+                    if (type_is_composite(type))
+                    {
+                        size_t size = guess_stack_size_from_size(type->size);
+                        emit_lea(RDI, RSP, arg_stack_size + arg_storage_used);
+                        emit_mov(RAX, RDI, 8);
+                        
+                        if (arg_expr->kind == VAL_CONSTANT)
+                            assert(("TODO store constant composite arg", 0));
+                        else
+                        {
+                            emit_mov(RSI, RSP, 8);
+                            emit_memcpy_static(type->size, 1, 0);
+                            emit_shrink_stack_safe(size);
+                        }
+                        arg_storage_used += size;
+                        assert(arg_storage_used <= arg_storage_size);
+                        emit_push_safe(RAX);
+                    }
+                    else
+                        _push_small_if_const(arg_expr);
                     
                     //int64_t where = abi_get_next(type_is_float(type));
                     int64_t where = (int64_t)argwheres->item;
@@ -2039,6 +2299,7 @@ void compile_code(Node * ast, int want_ptr)
                         where = -where;
                         where -= 16; // remove rbp and return address from offset consideration
                         emit_mov_into_offset(RSP, where, RAX, 8);
+                        assert(where + 8 <= arg_stack_size);
                     }
                     
                     arg = arg->next;
@@ -2058,10 +2319,12 @@ void compile_code(Node * ast, int want_ptr)
                 label_anon_num += 1;
                 #endif
                 
-                emit_mov_offset(RAX, RSP, arg_stack_size, 8);
+                assert(expr->kind == VAL_STACK_TOP);
+                emit_mov_offset(RAX, RSP, arg_storage_size + arg_stack_size, 8);
+                //emit_breakpoint();
                 emit_call(RAX);
                 
-                emit_shrink_stack_safe(arg_stack_size);
+                emit_shrink_stack_safe(arg_storage_size + arg_stack_size);
                 
                 // pop function address
                 emit_dry_pop_safe();
@@ -2076,10 +2339,155 @@ void compile_code(Node * ast, int want_ptr)
                 Value * value = new_value(callee_return_type);
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
+                
+                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
             } break;
             case ARRAYINDEX:
             {
-                assert(("TODO: ARRAYINDEX", 0));
+                Value * expr = stack_pop()->val;
+                Type * array_type = expr->type;
+                // Indexing sometimes has to operate on a value instead of a virtual pointer.
+                // When this happens, it means that the value is at the top of the stack, pointed to by RSP.
+                uint8_t is_on_stack = 1;
+                if (type_is_pointer(array_type))
+                {
+                    is_on_stack = 0;
+                    Type * ptr_type = expr->type;
+                    assert(ptr_type);
+                    array_type = ptr_type->inner_type;
+                }
+                assert(array_type);
+                assert(("tried to use indexing on non-array", type_is_array(array_type)));
+                
+                compile_code(nth_child(next, 0), 0);
+                StackItem * item = stack_pop();
+                assert(item);
+                Value * value = item->val;
+                assert(("Array indexes must be i64s!", type_is_int(value->type) && type_is_signed(value->type) && value->type->size == 8));
+                
+                // FIXME handle const indexes more efficiently
+                _push_small_if_const(value);
+                emit_pop_safe(RAX);
+                
+                Type * inner_type = array_type->inner_type;
+                size_t inner_size = guess_aligned_size_from_size(inner_type->size);
+                emit_mov_imm(RDX, inner_size, 8);
+                emit_imul(RDX, 8);
+                
+                // possible cases:
+                //
+                // - we want any pointer and the array is not on the stack
+                // -- trivial, just pointer math
+                //
+                // - we want a REAL pointer and the array IS on the stack
+                // -- this is handled by the code for the "&" operator. we just push the value.
+                //
+                // ! from here on, pointers cannot be generated, only on-stack values
+                // !! asking for virtual pointers for stack stuff just pushes the value onto the stack
+                // !! every real pointer case has been accounted for
+                //
+                // - the element is small
+                // -- copy out of struct into register, then push register onto stack
+                //
+                // - the element is large
+                // -- if array IS on stack, memcpy element into new location on stack and shrink stack
+                // --- overlap not possible because all properties are same size
+                // -- if array not on stack, expand stack and memcpy element onto stack
+                
+                if (want_ptr != 0 && !is_on_stack)
+                {
+                    emit_pop_safe(RAX);
+                    emit_add(RAX, RDX, 8);
+                    emit_push_safe(RAX);
+                    
+                    stack_push_new_anywhere(make_ptr_type(inner_type));
+                }
+                else if (inner_type->size <= 8)
+                {
+                    uint64_t array_size_stack = type_stack_size(array_type);
+                    
+                    if (is_on_stack)
+                    {
+                        emit_add(RDX, RSP, 8);
+                        emit_mov_reg_preg(RAX, RDX, inner_type->size);
+                        emit_shrink_stack_safe(array_size_stack);
+                        emit_push_safe(RAX);
+                        
+                        stack_push_new_top(inner_type);
+                    }
+                    else if (want_ptr == 0)
+                    {
+                        emit_pop_safe(RAX);
+                        emit_add(RDX, RAX, 8);
+                        emit_mov_reg_preg(RAX, RDX, inner_type->size);
+                        emit_push_safe(RAX);
+                        
+                        stack_push_new_top(inner_type);
+                    }
+                    else
+                        assert(("SHOULD BE UNREACHABLE!!! PLEASE REPORT kafdgu43", 0));
+                }
+                else
+                    assert(("TODO: more types of array indexing", 0));
+                /*
+                else
+                {
+                    assert(type_is_struct(inner_type) || type_is_array(inner_type));
+                    
+                    uint64_t struct_size_stack = type_stack_size(struct_type);
+                    uint64_t prop_size_stack = type_stack_size(inner_type);
+                    
+                    // on stack, don't want pointer, check for overlap and memcpy appropriately
+                    if (is_on_stack)
+                    {
+                        assert(("UNREACHABLE!!! PLEASE REPORT", want_ptr != WANT_PTR_REAL));
+                        
+                        uint64_t target_offset = struct_size_stack - prop_size_stack;
+                        uint64_t prop_end = prop_offset + prop_size_stack;
+                        // no movement
+                        if (target_offset == prop_offset)
+                        {
+                            stack_push_new_top(inner_type);
+                        }
+                        // no overlap
+                        else if (prop_end <= target_offset)
+                        {
+                            emit_mov(RSI, RSP, 8);
+                            emit_mov(RDI, RSP, 8);
+                            emit_add_imm(RDI, prop_offset);
+                            emit_mov_imm(RCX, inner_type->size, 8);
+                            emit_rep_movs(1);
+                            
+                            emit_shrink_stack_safe(target_offset);
+                            
+                            stack_push_new_top(inner_type);
+                        }
+                        // overlap
+                        else
+                        {
+                            assert(("TODO: INDIRECTION on stack with overlap", 0));
+                        }
+                    }
+                    else
+                    {
+                        // on heap, don't want pointer, expand stack and memcpy onto stack
+                        if (want_ptr == 0)
+                        {
+                            emit_pop_safe(RSI);
+                            emit_add_imm(RSI, prop_offset);
+                            emit_expand_stack_safe(prop_size_stack);
+                            emit_mov(RDI, RSP, 8);
+                            emit_mov_imm(RCX, inner_type->size, 8);
+                            emit_rep_movs(1);
+                            
+                            stack_push_new_top(inner_type);
+                        }
+                        else // on heap, want ptr? already covered
+                            assert(("UNREACHABLE!!! PLEASE REPORT", 0));
+                    }
+                }
+                */
             } break;
             case INDIRECTION:
             {
@@ -2098,7 +2506,7 @@ void compile_code(Node * ast, int want_ptr)
                 assert(struct_type);
                 assert(("tried to use indirection on non-struct", type_is_struct(struct_type)));
                 
-                Node * name = nth_child(ast, 1)->first_child;
+                Node * name = nth_child(next, 0);
                 char * name_text = strcpy_len(name->text, name->textlen);
                 
                 StructData * prop = struct_type->struct_data;
@@ -2122,7 +2530,7 @@ void compile_code(Node * ast, int want_ptr)
                 // -- trivial, just pointer math
                 //
                 // - we want a REAL pointer and the struct IS on the stack
-                // -- if property is struct, move into temp var and return address
+                // -- if property is composite, move into temp var and return address
                 // --- TODO/FIXME implement
                 // -- else, code is wrong, error
                 //
@@ -2141,9 +2549,12 @@ void compile_code(Node * ast, int want_ptr)
                 
                 if (want_ptr != 0 && !is_on_stack)
                 {
-                    emit_pop_safe(RAX);
-                    emit_add_imm(RAX, prop_offset);
-                    emit_push_safe(RAX);
+                    if (prop_offset != 0)
+                    {
+                        emit_pop_safe(RAX);
+                        emit_add_imm(RAX, prop_offset);
+                        emit_push_safe(RAX);
+                    }
                     
                     stack_push_new_anywhere(make_ptr_type(prop_type));
                 }
@@ -2193,8 +2604,13 @@ void compile_code(Node * ast, int want_ptr)
                         
                         uint64_t target_offset = struct_size_stack - prop_size_stack;
                         uint64_t prop_end = prop_offset + prop_size_stack;
+                        // no movement
+                        if (target_offset == prop_offset)
+                        {
+                            stack_push_new_top(prop_type);
+                        }
                         // no overlap
-                        if (prop_end <= target_offset)
+                        else if (prop_end <= target_offset)
                         {
                             emit_mov(RSI, RSP, 8);
                             emit_mov(RDI, RSP, 8);
@@ -2240,6 +2656,96 @@ void compile_code(Node * ast, int want_ptr)
         }
         printf("after %zu\n", stack_offset);
     } break;
+    case ARRAY_LITERAL:
+    {
+        ptrdiff_t starting_offset = stack_offset;
+        
+        compile_code(nth_child(ast, 0), 0);
+        Value * first = stack_pop()->val;
+        
+        Type * inner_type = first->type;
+        size_t count = ast->childcount;
+        Type * array_type = make_array_type(inner_type, count);
+        size_t total_size = array_type->size;
+        size_t stack_size = guess_stack_size_from_size(array_type->size);
+        size_t inner_size = total_size / count;
+        assert(inner_size * count == total_size);
+        
+        assert(stack_offset >= starting_offset);
+        
+        // TODO/FIXME: support fully const array literals
+        
+        uint8_t all_const = 1;
+        if (stack_offset != starting_offset)
+        {
+            assert((stack_offset - starting_offset) == (ptrdiff_t)inner_size);
+            all_const = 0;
+            
+            if (!type_is_composite(inner_type))
+            {
+                emit_pop_safe(RAX);
+                emit_expand_stack_safe(stack_size - inner_size);
+                emit_push_safe(RAX);
+                
+                //emit_mov_imm(RAX, first->_val, inner_size);
+                //emit_mov_preg_reg(RSP, RAX, inner_size);
+            }
+            else
+            {
+                emit_expand_stack_safe(stack_size - (stack_offset - starting_offset));
+                assert(("TODO: array literal, start is non-const composite case", 0));
+            }
+        }
+        else
+        {
+            assert(first->kind == VAL_CONSTANT);
+            printf("-- array has stack size %zu\n", stack_size);
+            emit_expand_stack_safe(stack_size);
+            
+            if (!type_is_composite(inner_type))
+            {
+                assert(!first->mem && !first->loc);
+                emit_mov_imm(RAX, first->_val, inner_size);
+                emit_mov_preg_reg(RSP, RAX, inner_size);
+            }
+            else
+                assert(("TODO: array literal, start is const composite case", 0));
+        }
+        
+        size_t offset = inner_size;
+        for (size_t i = 1; i < count; i += 1)
+        {
+            compile_code(nth_child(ast, i), 0);
+            Value * next = stack_pop()->val;
+            Type * type = next->type;
+            assert(("arrays must consist of only the same type", types_same(type, inner_type)));
+            
+            if (next->kind == VAL_CONSTANT)
+            {
+                if (!type_is_composite(inner_type))
+                {
+                    assert(!next->mem && !next->loc);
+                    emit_mov_imm(RAX, next->_val, inner_size);
+                    emit_mov_into_offset(RSP, offset, RAX, inner_size);
+                }
+                else
+                    assert(("TODO: array literal, secondary elements, start is const composite case", 0));
+            }
+            else
+            {
+                all_const = 0;
+                assert(("TODO: array literal, non-const case", 0));
+            }
+            
+            offset += inner_size;
+        }
+        
+        Value * value = new_value(array_type);
+        value->kind = VAL_STACK_TOP;
+        stack_push_new(value);
+        
+        //assert(("TODO array literals", 0));
+    } break;
     case STRUCT_LITERAL:
     {
         Node * type_node = nth_child(ast, 0);
@@ -2250,35 +2756,95 @@ void compile_code(Node * ast, int want_ptr)
         
         emit_expand_stack_safe(struct_size_stack);
         
+        uint64_t start_height = eval_stack_height;
+        uint8_t all_const = 1;
+        
         StructData * struct_data = struct_type->struct_data;
         Node * next = type_node->next_sibling;
         assert(next);
-        while (next)
+        
+        while (next && struct_data)
         {
+            compile_code(next, 0);
+            StackItem * item = stack_peek();
+            assert(item);
+            
+            if (item->val->kind != VAL_CONSTANT)
+                all_const = 0;
+            
+            assert(("wrong type used in struct literal", types_same(item->val->type, struct_data->type)));
             
             struct_data = struct_data->next;
             next = next->next_sibling;
         }
+        assert(("wrong number of elements in struct literal", !(struct_data || next)));
         
-        assert(("TODO: struct literal", 0));
+        if (all_const)
+        {
+            emit_shrink_stack_safe(struct_size_stack);
+            
+            uint8_t * const_struct_bytes = zero_alloc(struct_type->size);
+            
+            struct_data = struct_type->struct_data;
+            ptrdiff_t n = eval_stack_height - start_height;
+            while (n > 0)
+            {
+                n -= 1;
+                StackItem * item = stack_peek_nth_down(n);
+                assert(item);
+                Value * value = item->val;
+                
+                uint8_t * dest = const_struct_bytes + struct_data->offset;
+                
+                if (type_is_array(value->type) || type_is_struct(value->type))
+                {
+                    if (value->mem)
+                        memcpy(dest, value->mem, value->type->size);
+                    else
+                        memcpy(dest, &(static_data[value->loc]), value->type->size);
+                }
+                else
+                    memcpy(dest, &value->_val, value->type->size);
+                
+                struct_data = struct_data->next;
+            }
+            n = eval_stack_height - start_height;
+            while (n > 0)
+            {
+                stack_pop();
+                n -= 1;
+            }
+            
+            Value * value = new_value(struct_type);
+            value->kind = VAL_CONSTANT;
+            value->mem = const_struct_bytes;
+            stack_push_new(value);
+        }
+        else
+        {
+            assert(("TODO: non-const struct literal", 0));
+        }
     } break;
     case STATEMENT:
     {
+        assert(("weird stack desync!!!", eval_stack_height == 0));
         puts("compiling statement.....");
         ptrdiff_t offs = stack_offset;
         compile_code(ast->first_child, 0);
-        printf("%zu %zu\n", offs, stack_offset);
-        if (offs < stack_offset)
+        printf("%zu %zu %zu\n", offs, stack_offset, eval_stack_height);
+        
+        // realign stack if statement produced a value (e.g. function calls)
+        if (stack_peek())
         {
-            puts("realigning stack...");
+            puts("realigning void stack...");
             stack_pop();
-            emit_dry_pop_safe();
         }
         else if (offs > stack_offset)
         {
             assert(("horrible stack desync!!!!!", 0));
         }
         assert(("stack desync!", offs == stack_offset));
+        assert(("weird stack desync!!!", eval_stack_height == 0));
     } break;
     case STATEMENTLIST:
     {
@@ -2305,11 +2871,11 @@ void compile_code(Node * ast, int want_ptr)
         Node * expr = nth_child(ast, 2);
         assert(expr);
         
-        size_t code_start = code->len;
+        size_t code_start = emitter_get_code_len();
         compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
-        if (code->len != code_start || val->val->kind != VAL_CONSTANT)
+        if (emitter_get_code_len() != code_start || val->val->kind != VAL_CONSTANT)
         {
             puts("Error: tried to assign non-const value to a global constant");
             assert(0);
@@ -2355,33 +2921,109 @@ void compile_code(Node * ast, int want_ptr)
             compile_code(nth_child(ast, 2), 0);
             Value * expr = stack_pop()->val;
             
-            _push_small_if_const(expr);
+            assert(expr);
+            assert(types_same(expr->type, type));
             
-            emit_pop_safe(RAX); // value into RDX
-            emit_mov_into_offset(RBP, -var->val->loc, RAX, expr->type->size);
+            if (!type_is_composite(expr->type))
+            {
+                _push_small_if_const(expr);
+                emit_pop_safe(RAX);
+                emit_mov_into_offset(RBP, -var->val->loc, RAX, expr->type->size);
+            }
+            else if (expr->kind == VAL_CONSTANT)
+            {
+                if (expr->mem)
+                {
+                    size_t loc = push_static_data(expr->mem, expr->type->size);
+                    emit_mov_imm(RSI, loc, 8);
+                }
+                else
+                    emit_mov_imm(RSI, expr->loc, 8);
+                log_static_relocation(emitter_get_code_len() - 8, expr->loc);
+                
+                emit_lea(RDI, RBP, -var->val->loc);
+                
+                emit_mov_imm(RCX, expr->type->size, 8);
+                emit_rep_movs(1);
+            }
+            else
+            {
+                assert(expr->kind == VAL_STACK_TOP);
+                size_t size = guess_stack_size_from_size(expr->type->size);
+                emit_lea(RDI, RBP, -var->val->loc);
+                emit_mov(RSI, RSP, 8);
+                emit_memcpy_static(expr->type->size, 1, 0);
+                emit_shrink_stack_safe(size);
+                //assert(("TODO/FIXME: non-const aggregate fulldeclaration", 0));
+            }
             
+            printf("%zd\n", stack_offset);
             assert(stack_offset == 0);
         }
     } break;
     case BINSTATE:
     {
+        assert(eval_stack_height == 0);
+        
         compile_code(nth_child(ast, 0), 0);
-        compile_code(nth_child(ast, 1), 0);
-        
-        Value * expr = stack_pop()->val;
         Value * target = stack_pop()->val;
+        _push_small_if_const(target);
         
+        compile_code(nth_child(ast, 1), 0);
+        Value * expr = stack_pop()->val;
+        
+        printf("%d\n", target->kind);
+        printf("stack height: %zu\n", eval_stack_height);
+        assert(("tried to assign to constant!", target->kind != VAL_CONSTANT));
         assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_ANYWHERE);
         assert(target);
         assert(expr);
         
-        _push_small_if_const(expr); // FIXME non-prim-sized types
-        emit_pop_safe(RDX); // value into RDX
-        
-        _push_small_if_const(target);
-        emit_pop_safe(RAX); // destination location into RAX
-        
-        emit_mov_preg_reg(RAX, RDX, expr->type->size);
+        if (type_is_composite(expr->type))
+        {
+            if (expr->kind == VAL_CONSTANT)
+            {
+                emit_pop_safe(RDI);
+                
+                if (expr->mem)
+                {
+                    size_t loc = push_static_data(expr->mem, expr->type->size);
+                    emit_mov_imm(RSI, loc, 8);
+                }
+                else
+                    emit_mov_imm(RSI, expr->loc, 8);
+                log_static_relocation(emitter_get_code_len() - 8, expr->loc);
+                
+                emit_mov_imm(RCX, expr->type->size, 8);
+                emit_rep_movs(1);
+            }
+            else
+            {
+                assert(expr->kind == VAL_STACK_TOP);
+                
+                size_t size = guess_stack_size_from_size(expr->type->size);
+                printf("%zu, %zu\n", size + 8, stack_offset);
+                assert((ptrdiff_t)size + 8 == stack_offset);
+                
+                emit_lea(RDI, RBP, -stack_loc);
+                emit_mov(RSI, RSP, 8);
+                
+                emit_memcpy_static(expr->type->size, 1, 0);
+                emit_shrink_stack_safe(size + 8);
+                
+                //assert(("TODO/FIXME: non-const aggregate assignment", 0));
+            }
+        }
+        else
+        {
+            _push_small_if_const(expr);
+            emit_pop_safe(RDX); // value into RDX
+            
+            _push_small_if_const(target);
+            emit_pop_safe(RAX); // destination location into RAX
+            
+            emit_mov_preg_reg(RAX, RDX, expr->type->size);
+        }
     } break;
     case SIZEOF:
     {
@@ -2394,13 +3036,56 @@ void compile_code(Node * ast, int want_ptr)
         
         stack_push_new(value);
     } break;
+    case BITCAST:
+    {
+        compile_code(nth_child(ast, 0), 0);
+        StackItem * stackitem = stack_pop();
+        Value * expr = stackitem->val;
+        assert(expr);
+        
+        Type * orig_type = expr->type;
+        Type * new_type = parse_type(nth_child(ast, 1));
+        
+        // FIXME: how are function pointer casts defined again...? do they act the same as data pointers?
+        if (type_is_pointer(orig_type) && type_is_pointer(new_type))
+        {
+            expr->type = new_type;
+            stack_push(stackitem);
+        }
+        // ptr to int
+        else if (type_is_pointer(orig_type))
+        {
+            assert(type_is_int(new_type) && !type_is_signed(new_type) && new_type->size == 8);
+            expr->type = new_type;
+            stack_push(stackitem);
+        }
+        // int to ptr
+        else if (type_is_pointer(new_type))
+        {
+            assert(type_is_int(orig_type) && !type_is_signed(orig_type) && orig_type->size == 8);
+            expr->type = new_type;
+            stack_push(stackitem);
+        }
+        else if (type_is_composite(new_type) == type_is_composite(orig_type))
+        {
+            assert(orig_type->size == new_type->size);
+            
+            expr->type = new_type;
+            stack_push(stackitem);
+        }
+        else
+        {
+            assert(("FIXME/TODO: composite <-> primitive casts (complicated because of constexprs)", 0));
+        }
+    } break;
     case CAST:
     {
         compile_code(nth_child(ast, 0), 0);
         StackItem * stackitem = stack_pop();
         Value * expr = stackitem->val;
-        Type * type = parse_type(nth_child(ast, 1));
         assert(expr);
+        
+        Type * type = parse_type(nth_child(ast, 1));
         // FIXME non-prim-sized types
         assert(expr->type->size <= 8);
         assert(type->size <= 8);
@@ -2422,7 +3107,9 @@ void compile_code(Node * ast, int want_ptr)
             // size downcast. do nothing.
             if (type->size <= expr_type->size)
             {
-                assert(!(type->size != expr_type->size && type_is_signed(type) != type_is_signed(expr_type)));
+                uint8_t same_sign = type_is_signed(type) == type_is_signed(expr_type);
+                uint8_t same_size = type->size == expr_type->size;
+                assert((same_sign + same_size) < 2);
                 
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -2633,7 +3320,7 @@ void compile_code(Node * ast, int want_ptr)
             emit_cast_int_to_float(XMM0, RAX, type->size, real_size);
             
             // matched with emit_push above
-            emit_xmm_push_safe(XMM0, expr_type->size);
+            emit_xmm_push_safe(XMM0, type->size);
             
             emit_label(0, label_anon_num);
             label_anon_num += 2;
@@ -2837,6 +3524,8 @@ void compile_code(Node * ast, int want_ptr)
             
             if (strcmp(op_text, "+") == 0)
                 compile_unary_plus(val);
+            else if (strcmp(op_text, "@") == 0)
+                compile_unary_volatile(val);
             else if (strcmp(op_text, "*") == 0)
             {
                 assert(val->val->type->variant == TYPE_POINTER);
@@ -2896,6 +3585,8 @@ void compile_code(Node * ast, int want_ptr)
             }
             else if (strcmp(op_text, "-") == 0)
                 compile_unary_minus(val);
+            else if (strcmp(op_text, "~") == 0)
+                compile_unary_bitnot(val);
             else if (strcmp(op_text, "!") == 0)
                 compile_unary_not(val);
             else
@@ -3036,6 +3727,7 @@ void compile_code(Node * ast, int want_ptr)
 
 void compile_defs_compile(Node * ast)
 {
+    current_node = ast;
     // compile function definitions/bodies
     switch (ast->type)
     {
@@ -3045,9 +3737,10 @@ void compile_defs_compile(Node * ast)
         char * name_text = strcpy_len(name->text, name->textlen);
         FuncDef * funcdef = get_funcdef(name_text);
         assert(funcdef);
+        current_funcdef = funcdef;
         
-        funcdef->code_offset = code->len;
-        add_visible_function(funcdef, code->len);
+        funcdef->code_offset = emitter_get_code_len();
+        add_visible_function(funcdef, emitter_get_code_len());
         
         stack_loc = 0;
         local_vars = 0;
@@ -3064,19 +3757,23 @@ void compile_defs_compile(Node * ast)
             while (stack_loc % align)
                 stack_loc++;
             
-            Variable * var = add_local(arg_name->item, arg->item);
+            Variable * var = add_local(arg_name->item, type);
             var->val->kind = VAL_STACK_BOTTOM;
             var->val->loc = stack_loc;
             
             arg_name = arg_name->next;
             arg = arg->next;
         }
+        if (type_is_composite(return_type))
+        {
+            add_local("___RETURN_POINTER_bzfkmje", make_ptr_type(return_type));
+        }
         // FIXME check if return type is a large struct, because they're returned by memsetting into pointers
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         emit_sub_imm32(RSP, stack_loc);
-        log_stack_size_usage(code->len - 4);
+        log_stack_size_usage(emitter_get_code_len() - 4);
         
         // emit code to assign arguments into local stack slots
         abi_reset_state();
@@ -3090,21 +3787,56 @@ void compile_defs_compile(Node * ast)
             
             // FIXME large aggregates (as pointers)
             // FIXME 2: small aggregates that consist entirely of floats
-            assert(var->val->type->size <= 8);
+            //assert(var->val->type->size <= 8);
             int64_t where = abi_get_next(type_is_float(var->val->type));
             if (where > 0)
-                emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
+            {
+                if (where <= R15)
+                {
+                    if (!type_is_composite(var->val->type))
+                        emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
+                    else
+                    {
+                        emit_mov(RSI, where, 8);
+                        emit_lea(RDI, RBP, -var->val->loc);
+                        emit_memcpy_static(var->val->type->size, 1, 0);
+                    }
+                }
+                else
+                {
+                    emit_mov_base_from_xmm(RAX, where, 8);
+                    emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+                }
+            }
             else
             {
-                // FIXME: this is dumb
-                // sysv can use every single lower int register
-                // i need to add support for non-RAX/RDX registers to the mov emitters
-                emit_mov_offset(RAX, RBP, -where, var->val->type->size);
-                emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+                if (!type_is_composite(var->val->type))
+                {
+                    emit_mov_offset(RAX, RBP, -where, var->val->type->size);
+                    emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+                }
+                else
+                {
+                    emit_mov_offset(RSI, RBP, -where, 8);
+                    emit_lea(RDI, RBP, -var->val->loc);
+                    emit_memcpy_static(var->val->type->size, 1, 0);
+                }
             }
             
             arg_name = arg_name->next;
             arg = arg->next;
+        }
+        if (type_is_composite(return_type))
+        {
+            Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
+            int64_t where = abi_get_next(0);
+            if (where > 0)
+                emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
+            else
+            {
+                emit_mov_offset(RAX, RBP, -where, var->val->type->size);
+                emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+            }
         }
         
         Node * statement = nth_child(ast, 4)->first_child;
@@ -3126,7 +3858,7 @@ void compile_defs_compile(Node * ast)
         
         /*
         emit_add_imm32(RSP, stack_loc);
-        log_stack_size_usage(code->len - 4);
+        log_stack_size_usage(emitter_get_code_len() - 4);
         emit_pop(RBP);
         emit_ret();
         */
@@ -3137,6 +3869,7 @@ void compile_defs_compile(Node * ast)
 
 void compile_globals_collect(Node * ast)
 {
+    current_node = ast;
     // collect globals
     switch (ast->type)
     {
@@ -3151,11 +3884,11 @@ void compile_globals_collect(Node * ast)
         Node * expr = nth_child(ast, 2);
         assert(expr);
         
-        size_t code_start = code->len;
+        size_t code_start = emitter_get_code_len();
         compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
-        if (code->len != code_start || val->val->kind != VAL_CONSTANT)
+        if (emitter_get_code_len() != code_start || val->val->kind != VAL_CONSTANT)
         {
             puts("Error: tried to assign non-const value to a global constant");
             assert(0);
@@ -3170,7 +3903,10 @@ void compile_globals_collect(Node * ast)
         
         Variable * var = add_global(name_text, type);
         var->val->kind = VAL_CONSTANT;
-        var->val->loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
+        if (!type_is_composite(var->val->type))
+            var->val->loc = push_static_data((uint8_t *)&val->val->_val, val->val->type->size);
+        else
+            assert(("TODO: assign composites in global const initializers", 0));
     } break;
     case GLOBALDECLARATION:
     case GLOBALFULLDECLARATION:
@@ -3190,22 +3926,25 @@ void compile_globals_collect(Node * ast)
             Node * expr = nth_child(ast, 3);
             assert(expr);
             
-            size_t code_start = code->len;
+            size_t code_start = emitter_get_code_len();
             compile_code(expr, 0);
             
             StackItem * val = stack_pop();
             assert(val);
             assert(types_same(type, val->val->type));
             
-            if (code->len != code_start)
+            if (emitter_get_code_len() != code_start)
             {
-                // FIXME aggregates
-                assert(val->val->type->size <= 8);
-                emit_pop_safe(RDX);
-                // move variable location into RAX
-                emit_mov_imm(RAX, var->val->loc, 8);
-                log_global_relocation(code->len - 8, var->val->loc);
-                emit_mov_preg_reg(RAX, RDX, val->val->type->size);
+                if (!type_is_composite(var->val->type))
+                {
+                    emit_pop_safe(RDX);
+                    // move variable location into RAX
+                    emit_mov_imm(RAX, var->val->loc, 8);
+                    log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
+                    emit_mov_preg_reg(RAX, RDX, val->val->type->size);
+                }
+                else
+                    assert(("TODO: assign composites in global initializers", 0));
             }
             else
             {
@@ -3323,7 +4062,7 @@ void compile(Node * ast)
         funcdef->num_args = 0;
         funcdef->vismod = "";
 
-        add_visible_function(funcdef, code->len);
+        add_visible_function(funcdef, emitter_get_code_len());
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         
@@ -3332,7 +4071,7 @@ void compile(Node * ast)
         
         emit_sub_imm32(RSP, stack_loc);
         
-        log_stack_size_usage(code->len - 4);
+        log_stack_size_usage(emitter_get_code_len() - 4);
         
         next = ast->first_child;
         while (next)
@@ -3343,7 +4082,7 @@ void compile(Node * ast)
         
         assert(stack_loc >= 0);
         emit_add_imm32(RSP, stack_loc);
-        log_stack_size_usage(code->len - 4);
+        log_stack_size_usage(emitter_get_code_len() - 4);
         emit_pop(RBP);
         emit_ret();
         

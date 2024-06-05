@@ -22,21 +22,92 @@ void print_float(double x)
 }
 
 __attribute__((noinline))
-int crash_if_misaligned(int x)
+void print_bytes(uint8_t * bytes, uint64_t count)
 {
-    // MOVDQA depends on the given pointer, rbp in this case, being 16-byte aligned
-    //asm volatile(
-    __asm__ volatile(
-        ".intel_syntax noprefix \n" \
-        "MOVAPD XMM0, [rbp] \n" \
-        ".att_syntax \n"
-    );
-    return 0;
+    while (count > 0)
+    {
+        printf("%02X ", *bytes);
+        bytes += 1;
+        count -= 1;
+    }
+    puts("");
+}
+
+__attribute__((noinline))
+void print_fmt(char * cstring_bytes, char ** vars)
+{
+    puts("TODO: implement print_fmt");
+    /*
+    unsafe
+    {
+        let mut strlen = 0;
+        while *cstring_bytes.add(strlen) != 0
+        {
+            strlen += 1;
+        }
+        let orig_string = String::from_utf8_lossy(std::slice::from_raw_parts(cstring_bytes, strlen));
+        
+        let mut s = "".to_string();
+        
+        let mut state = ' '; // ' ' - normal, '%' - in format specifier
+        for c in orig_string.chars()
+        {
+            match state
+            {
+                ' ' =>
+                    match c
+                    {
+                        '%' => state = '%',
+                        _ => s.push(c),
+                    }
+                '%' =>
+                {
+                    state = ' ';
+                    if !(*vars).is_null()
+                    {
+                        match c
+                        {
+                            'X' => s.push_str(&format!("{:X}", *((*vars) as *mut u64))),
+                            'x' => s.push_str(&format!("{:x}", *((*vars) as *mut u64))),
+                            'u' => s.push_str(&format!("{}", *((*vars) as *mut u64))),
+                            'i' => s.push_str(&format!("{}", *((*vars) as *mut i64))),
+                            'F' => s.push_str(&format!("{}", *((*vars) as *mut f64))),
+                            'f' => s.push_str(&format!("{}", *((*vars) as *mut f32))),
+                            's' =>
+                            {
+                                let mut strlen = 0;
+                                let cstring_bytes = *vars;
+                                while *cstring_bytes.add(strlen) != 0
+                                {
+                                    strlen += 1;
+                                }
+                                let orig_string = String::from_utf8_lossy(std::slice::from_raw_parts(cstring_bytes, strlen));
+                                s.push_str(&orig_string);
+                            }
+                            'c' =>
+                                if let Some(c) = char::from_u32(*((*vars) as *mut u32))
+                                {
+                                    s.push(c);
+                                }
+                            _ =>
+                            {
+                                s.push('%');
+                                s.push(c);
+                            }
+                        }
+                        vars = vars.offset(1);
+                    }
+                }
+                _ => panic!(),
+            }
+        }
+        print!("{}", s);
+    }
+    */
 }
 
 int main(int argc, char ** argv)
 {
-    crash_if_misaligned(1234);
     print_float(1234.13);
     
     if (argc < 2)
@@ -99,7 +170,8 @@ int main(int argc, char ** argv)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
         register_funcimport("print_float", "funcptr(void, (f64))", (void *)print_float);
-        register_funcimport("crash_if_misaligned", "funcptr(i32, (i32))", (void *)crash_if_misaligned);
+        register_funcimport("print_bytes", "funcptr(void, (ptr(u8), u64))", (void *)print_bytes);
+        register_funcimport("print_fmt", "funcptr(void, (ptr(u8), ptr(ptr(u8))))", (void *)print_fmt);
 #pragma GCC diagnostic pop
         
         compile_program(root, &code);

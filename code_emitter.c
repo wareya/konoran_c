@@ -141,6 +141,12 @@ void do_fix_jumps(void)
     clear_jump_log();
 }
 
+size_t emitter_get_code_len(void)
+{
+    // ... first, flush all commands, once a command queue is implemented. then:
+    return code->len;
+}
+
 // condition codes for emit_jmp_cond_short
 enum {
     // weird
@@ -379,7 +385,7 @@ void emit_add_imm32(int reg, int64_t val)
     if (__a_aa__aaaa != 0x00) \
         byte_push(code, __a_aa__aaaa);
 
-void emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
+void _emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
 {
     last_is_terminator = 0;
     
@@ -392,19 +398,19 @@ void emit_addlike(int reg_d, int reg_s, size_t size, uint8_t opcode)
 }
 void emit_add(int reg_d, int reg_s, size_t size)
 {
-    emit_addlike(reg_d, reg_s, size, 0x00);
+    _emit_addlike(reg_d, reg_s, size, 0x00);
 }
 void emit_sub(int reg_d, int reg_s, size_t size)
 {
-    emit_addlike(reg_d, reg_s, size, 0x28);
+    _emit_addlike(reg_d, reg_s, size, 0x28);
 }
 void emit_cmp(int reg_d, int reg_s, size_t size)
 {
-    emit_addlike(reg_d, reg_s, size, 0x38);
+    _emit_addlike(reg_d, reg_s, size, 0x38);
 }
 void emit_test(int reg_d, int reg_s, size_t size)
 {
-    emit_addlike(reg_d, reg_s, size, 0x84);
+    _emit_addlike(reg_d, reg_s, size, 0x84);
 }
 void emit_xor(int reg_d, int reg_s, size_t size)
 {
@@ -412,15 +418,15 @@ void emit_xor(int reg_d, int reg_s, size_t size)
     if (reg_d == reg_s && size == 8)
         size = 4;
     
-    emit_addlike(reg_d, reg_s, size, 0x30);
+    _emit_addlike(reg_d, reg_s, size, 0x30);
 }
 void emit_and(int reg_d, int reg_s, size_t size)
 {
-    emit_addlike(reg_d, reg_s, size, 0x20);
+    _emit_addlike(reg_d, reg_s, size, 0x20);
 }
 void emit_or(int reg_d, int reg_s, size_t size)
 {
-    emit_addlike(reg_d, reg_s, size, 0x08);
+    _emit_addlike(reg_d, reg_s, size, 0x08);
 }
 void emit_mullike(int reg, size_t size, uint8_t maskee)
 {
@@ -498,6 +504,10 @@ void emit_float_add(int reg_d, int reg_s, size_t size)
 void emit_float_sub(int reg_d, int reg_s, size_t size)
 {
     emit_float_op(reg_d, reg_s, size, 0x5C);
+}
+void emit_float_sqrt(int reg_d, int reg_s, size_t size)
+{
+    emit_float_op(reg_d, reg_s, size, 0x51);
 }
 
 void emit_xorps(int reg_d, int reg_s)
@@ -954,7 +964,7 @@ void emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
 
-void emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uint8_t byteop, uint8_t longop)
+void _emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uint8_t byteop, uint8_t longop)
 {
     last_is_terminator = 0;
     assert(offset >= -2147483648 && offset <= 2147483647);
@@ -991,13 +1001,13 @@ void emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uint
 }
 void emit_mov_offset(int reg_d, int reg_s, int64_t offset, size_t size)
 {
-    emit_mov_offsetlike(reg_d, reg_s, offset, size, 0x8A, 0x8B);
+    _emit_mov_offsetlike(reg_d, reg_s, offset, size, 0x8A, 0x8B);
 }
 void emit_mov(int reg_d, int reg_s, size_t size)
 {
     last_is_terminator = 0;
     
-    emit_addlike(reg_d, reg_s, size, 0x88);
+    _emit_addlike(reg_d, reg_s, size, 0x88);
     /*
     
     //EMIT_LEN_PREFIX(reg_d, reg_s);
@@ -1019,19 +1029,17 @@ void emit_mov(int reg_d, int reg_s, size_t size)
     */
 }
 
-// only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
 void emit_mov_preg_reg(int preg_d, int reg_s, size_t size)
 {
-    emit_mov_offsetlike(reg_s, preg_d, 0, size, 0x88, 0x89);
+    _emit_mov_offsetlike(reg_s, preg_d, 0, size, 0x88, 0x89);
 }
 void emit_mov_into_offset(int preg_d, int64_t offset, int reg_s, size_t size)
 {
-    emit_mov_offsetlike(reg_s, preg_d, offset, size, 0x88, 0x89);
+    _emit_mov_offsetlike(reg_s, preg_d, offset, size, 0x88, 0x89);
 }
-// only supports RAX <-> RDX, only supports sizes 1, 2, 4, 8
 void emit_mov_reg_preg(int reg_d, int preg_s, size_t size)
 {
-    emit_mov_offset(reg_d, preg_s, 0, size);
+    _emit_mov_offsetlike(reg_d, preg_s, 0, size, 0x8A, 0x8B);
 }
 
 void emit_push(int reg)
@@ -1153,13 +1161,17 @@ void emit_sar_imm(int reg, uint8_t imm, size_t size)
     byte_push(code, imm);
 }
 
-void emit_mov_imm(int reg, uint64_t val, size_t size)
+void _emit_mov_imm(int reg, uint64_t val, size_t size)
 {
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
     
     byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
     bytes_push_int(code, (uint64_t)val, size);
+}
+void emit_mov_imm(int reg, uint64_t val, size_t size)
+{
+    _emit_mov_imm(reg, val, size);
 }
 void emit_lea_rip_offset(int reg, int64_t offset)
 {
@@ -1211,17 +1223,17 @@ void emit_breakpoint(void)
 void emit_lea(int reg_d, int reg_s, int64_t offset)
 {
     last_is_terminator = 0;
-    emit_mov_offsetlike(reg_d, reg_s, offset, 8,
+    _emit_mov_offsetlike(reg_d, reg_s, offset, 8,
         0xFF, // invalid
         0x8D // actual op
     );
 }
 // copy size bytes from RSI into RDI
-void emit_rep_movs(int chunk_size)
+void _emit_rep_movs(int chunk_size)
 {
     last_is_terminator = 0;
-    
     assert(chunk_size == 1 || chunk_size == 2 || chunk_size == 4 || chunk_size == 8);
+    
     if (chunk_size == 2)
         byte_push(code, 0x66);
     byte_push(code, 0xF3);
@@ -1229,12 +1241,37 @@ void emit_rep_movs(int chunk_size)
         byte_push(code, 0x48);
     byte_push(code, (chunk_size == 1) ? 0xA4 : 0xA5);
 }
-/*
-void emit_memcpy_dynamic(int reg_d, int reg_s, int reg_count, int chunk_size)
+// registers must be pre-filled: RSI, RDI, RCX
+// thrashes RCX, RSI, RDI, DF (direction flag)
+void emit_rep_movs(int chunk_size)
 {
-    
+    // CLD
+    byte_push(code, 0xFC);
+    _emit_rep_movs(chunk_size);
 }
-*/
+// registers must be pre-filled: RSI, RDI
+// thrashes RCX, RSI, RDI, DF (direction flag)
+void emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
+{
+    if (direction_is_down)
+        byte_push(code, 0xFD); // STD
+    else
+        byte_push(code, 0xFC); // CLD
+     
+     _emit_mov_imm(RCX, count, 8);
+     _emit_rep_movs(chunk_size);
+}
+// registers must be pre-filled: RSI, RDI, RCX
+// thrashes RCX, RSI, RDI, DF (direction flag)
+void emit_memcpy_dynamic(int chunk_size, int direction_is_down)
+{
+    if (direction_is_down)
+        byte_push(code, 0xFD); // STD
+    else
+        byte_push(code, 0xFC); // CLD
+     
+     _emit_rep_movs(chunk_size);
+}
 void emit_call(int reg)
 {
     last_is_terminator = 0;

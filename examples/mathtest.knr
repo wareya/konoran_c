@@ -1,9 +1,13 @@
 void main()
 {
+	/*
 	crash_if_misaligned(1592i32);
 	crash_if_misaligned(crash_if_misaligned(1592i32));
 	crash_if_misaligned(crash_if_misaligned(1592i32) + 1423i32);
 	crash_if_misaligned(1423i32 + crash_if_misaligned(1592i32));
+	*/
+	1243.0f64;
+	
 	print_float(1.8f64 / 4.0f64);
 	print_float((2.2f32 / 4.0f32) as f64);
 	print_float((4.2f32 / 4.0f32) as f64);
