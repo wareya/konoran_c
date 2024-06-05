@@ -1,9 +1,13 @@
 #include <stdint.h>
 #include "buffers.h"
 
-// TODO: emit log and relocation info
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 
 extern byte_buffer * code;
+
+// for debugging. disables optimization.
+//#define EMITTER_ALWAYS_FLUSH
 
 enum {
     RAX,
@@ -153,10 +157,10 @@ size_t emitter_log_size = 0;
 EmitterLog * emitter_log = 0;
 EmitterLog * emitter_log_get_nth(size_t n)
 {
-    if (n >= emitter_log_size)
+    if (n >= emitter_log_size || !emitter_log)
         return 0;
     EmitterLog * log = emitter_log;
-    while (n--)
+    while (n-- && log)
         log = log->prev;
     return log;
 }
@@ -196,6 +200,8 @@ EmitterLog * emitter_log_remove(EmitterLog * arg_log)
         if (arg_log->next)
             arg_log->next->prev = arg_log->prev;
     }
+    arg_log->next = 0;
+    arg_log->prev = 0;
     emitter_log_size -= 1;
     return arg_log;
 }
@@ -223,21 +229,29 @@ void emitter_log_add(EmitterLog * arg_log)
         
         emitter_log_size -= 1;
     }
-    
-    emitter_log_optimize();
 }
 void _emitter_log_add_0(void * funcptr)
 {
     EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
     log->funcptr = funcptr;
+    
     emitter_log_add(log);
+    emitter_log_optimize();
+#ifdef EMITTER_ALWAYS_FLUSH
+    emitter_log_flush();
+#endif
 }
 void _emitter_log_add_1(void * funcptr, uint64_t arg_1)
 {
     EmitterLog * log = (EmitterLog *)zero_alloc(sizeof(EmitterLog));
     log->funcptr = funcptr;
     log->args[0] = arg_1;
+    
     emitter_log_add(log);
+    emitter_log_optimize();
+#ifdef EMITTER_ALWAYS_FLUSH
+    emitter_log_flush();
+#endif
 }
 void _emitter_log_add_2(void * funcptr, uint64_t arg_1, uint64_t arg_2)
 {
@@ -245,7 +259,12 @@ void _emitter_log_add_2(void * funcptr, uint64_t arg_1, uint64_t arg_2)
     log->funcptr = funcptr;
     log->args[0] = arg_1;
     log->args[1] = arg_2;
+    
     emitter_log_add(log);
+    emitter_log_optimize();
+#ifdef EMITTER_ALWAYS_FLUSH
+    emitter_log_flush();
+#endif
 }
 void _emitter_log_add_3(void * funcptr, uint64_t arg_1, uint64_t arg_2, uint64_t arg_3)
 {
@@ -254,7 +273,12 @@ void _emitter_log_add_3(void * funcptr, uint64_t arg_1, uint64_t arg_2, uint64_t
     log->args[0] = arg_1;
     log->args[1] = arg_2;
     log->args[2] = arg_3;
+    
     emitter_log_add(log);
+    emitter_log_optimize();
+#ifdef EMITTER_ALWAYS_FLUSH
+    emitter_log_flush();
+#endif
 }
 void _emitter_log_add_4(void * funcptr, uint64_t arg_1, uint64_t arg_2, uint64_t arg_3, uint64_t arg_4)
 {
@@ -264,7 +288,12 @@ void _emitter_log_add_4(void * funcptr, uint64_t arg_1, uint64_t arg_2, uint64_t
     log->args[1] = arg_2;
     log->args[2] = arg_3;
     log->args[3] = arg_4;
+    
     emitter_log_add(log);
+    emitter_log_optimize();
+#ifdef EMITTER_ALWAYS_FLUSH
+    emitter_log_flush();
+#endif
 }
 
 #define emitter_log_add_0(X)              _emitter_log_add_0((void *)(X))
@@ -389,7 +418,7 @@ void _impl_emit_label(char * label, size_t num)
 {
     // align in a way that's good for instruction decoding
     if (code->len % 16 > 12)
-        emit_nop(16 - (code->len % 16));
+        _impl_emit_nop(16 - (code->len % 16));
     last_is_terminator = 0;
     log_label(label, num, code->len);
 }
@@ -1576,8 +1605,29 @@ void emit_sar_imm(int reg, uint8_t imm, size_t size)
     emitter_log_add_3(_impl_emit_sar_imm, reg, imm, size);
 }
 
+void _emit_mov_imm_extended(int reg, uint64_t val)
+{
+    last_is_terminator = 0;
+    size_t size = 8; // for EMIT_LEN_PREFIX
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, 0xC7);
+    byte_push(code, 0xC0 | reg);
+    bytes_push_int(code, val, 4);
+}
 void _emit_mov_imm(int reg, uint64_t val, size_t size)
 {
+    int64_t sval = val;
+    if ((size == 8 || size == 4) && val == 0)
+    {
+        _impl_emit_xor(reg, reg, 4);
+        return;
+    }
+    if ((size == 8 && sval >= -2147483648 && sval <= 2147483647) || (size == 4 && sval >= 0 && sval <= 2147483647))
+    {
+        _emit_mov_imm_extended(reg, val);
+        return;
+    }
     last_is_terminator = 0;
     EMIT_LEN_PREFIX(reg, 0);
     
@@ -1753,6 +1803,14 @@ void emit_call(int reg)
 {
     emitter_log_add_1(_impl_emit_call, reg);
 }
+void _impl_emit_leave(void)
+{
+    byte_push(code, 0xC9);
+}
+void emit_leave()
+{
+    emitter_log_add_0(_impl_emit_leave);
+}
 
 
 void emitter_log_apply(EmitterLog * log)
@@ -1761,13 +1819,13 @@ void emitter_log_apply(EmitterLog * log)
         _impl_emit_jmp_short((char *)log->args[0], log->args[1]);
     
     else if (log->funcptr == (void *)_impl_emit_jmp_cond_short)
-        _impl_emit_jmp_cond_short((char *)log->args[0], log->args[1], log->args[1]);
+        _impl_emit_jmp_cond_short((char *)log->args[0], log->args[1], log->args[2]);
     
     else if (log->funcptr == (void *)_impl_emit_jmp_long)
         _impl_emit_jmp_long((char *)log->args[0], log->args[1]);
     
     else if (log->funcptr == (void *)_impl_emit_jmp_cond_long)
-        _impl_emit_jmp_cond_long((char *)log->args[0], log->args[1], log->args[1]);
+        _impl_emit_jmp_cond_long((char *)log->args[0], log->args[1], log->args[2]);
     
     else if (log->funcptr == (void *)_impl_emit_nop)
         _impl_emit_nop(log->args[0]);
@@ -1961,6 +2019,9 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_call)
         _impl_emit_call(log->args[0]);
     
+    else if (log->funcptr == (void *)_impl_emit_leave)
+        _impl_emit_leave();
+    
     else
     {
         printf("_impl_emit_jmp_short: %p\n", (void *)_impl_emit_jmp_short);
@@ -1982,27 +2043,50 @@ uint8_t emitter_log_try_optimize(void)
         EmitterLog * log_prev = emitter_log_get_nth(1);
         EmitterLog * log_next = emitter_log_get_nth(0);
         
-        // FIXME give pushes and pops sizes so i can do this correctly
         if (log_prev->funcptr == (void *)_impl_emit_push_val &&
             log_next->funcptr == (void *)_impl_emit_pop)
         {
-            uint64_t reg = emitter_log_erase_nth(0)->args[0];
-            int64_t val = emitter_log_erase_nth(0)->args[0];
+            EmitterLog * pop = emitter_log_erase_nth(0);
+            EmitterLog * push = emitter_log_erase_nth(0);
+            uint64_t reg = pop->args[0];
+            int64_t val = push->args[0];
+            /*
+            // FIXME give pushes and pops sizes so i can do this correctly
             if (val >= (-128) && val <= 127)
             {
-                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 1);
-                emitter_log_add_3(_impl_emit_sign_extend, reg, 8, 1);
+                emitter_log_add(push);
+                emitter_log_add(pop);
             }
             else if (val >= (-0x8000) && val <= 0x7FFF)
             {
-                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 2);
-                emitter_log_add_3(_impl_emit_sign_extend, reg, 8, 2);
+                emitter_log_add(push);
+                emitter_log_add(pop);
             }
-            else if (val >= (-0x80000000) && val <= 0x7FFFFFFF)
-                emitter_log_add_3(_impl_emit_mov_imm, reg, val, 4);
+            */
+            if (val >= (-128) && val <= 127)
+            {
+                int8_t sval = val;
+                int64_t bval = sval;
+                emitter_log_add_3(_impl_emit_mov_imm, reg, bval, 8);
+            }
+            else if (val >= (-0x8000) && val <= 0x7FFF)
+            {
+                int16_t sval = val;
+                int64_t bval = sval;
+                emitter_log_add_3(_impl_emit_mov_imm, reg, bval, 8);
+            }
+            else if (val >= -2147483648 && val <= 2147483647)
+            {
+                int32_t sval = val;
+                int64_t bval = sval;
+                emitter_log_add_3(_impl_emit_mov_imm, reg, bval, 8);
+                return 1;
+            }
             else
+            {
                 emitter_log_add_3(_impl_emit_mov_imm, reg, val, 8);
-            return 1;
+                return 1;
+            }
         }
         
         if (log_prev->funcptr == (void *)_impl_emit_push &&
@@ -2018,6 +2102,36 @@ uint8_t emitter_log_try_optimize(void)
         }
         
         if (log_prev->funcptr == (void *)_impl_emit_push &&
+            log_next->funcptr == (void *)_impl_emit_mov &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != log_next->args[1] &&
+            log_prev->args[0] != RSP &&
+            log_next->args[0] != RSP &&
+            log_next->args[1] != RSP)
+        {
+            // swap order. makes other optimizations easier.
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            EmitterLog * push = emitter_log_erase_nth(0);
+            emitter_log_add(mov);
+            emitter_log_add(push);
+            return 1;
+        }
+        
+        if (log_prev->funcptr == (void *)_impl_emit_push &&
+            log_next->funcptr == (void *)_impl_emit_mov_imm &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != RSP &&
+            log_next->args[0] != RSP)
+        {
+            // swap order. makes other optimizations easier.
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            EmitterLog * push = emitter_log_erase_nth(0);
+            emitter_log_add(mov);
+            emitter_log_add(push);
+            return 1;
+        }
+        
+        if (log_prev->funcptr == (void *)_impl_emit_push &&
             log_next->funcptr == (void *)_impl_emit_pop &&
             log_prev->args[0] == log_next->args[0])
         {
@@ -2026,19 +2140,67 @@ uint8_t emitter_log_try_optimize(void)
             return 1;
         }
         
-        if (log_prev->funcptr == (void *)_impl_emit_push &&
-            log_next->funcptr == (void *)_impl_emit_mov &&
-            log_prev->args[0] != log_next->args[0] &&
-            log_prev->args[0] != log_next->args[1] &&
-            log_prev->args[0] != RSP &&
-            log_next->args[0] != RSP &&
-            log_next->args[1] != RSP)
+        if (log_prev->funcptr == (void *)_impl_emit_xmm_push &&
+            log_next->funcptr == (void *)_impl_emit_xmm_pop &&
+            log_prev->args[0] == log_next->args[0] &&
+            log_prev->args[1] == log_next->args[1])
         {
-            EmitterLog * mov = emitter_log_erase_nth(0);
-            EmitterLog * push = emitter_log_erase_nth(0);
-            emitter_log_add(mov);
-            emitter_log_add(push);
+            emitter_log_erase_nth(0);
+            emitter_log_erase_nth(0);
             return 1;
+        }
+        
+        // rsp manipulation directly followed by leave
+        if ((log_prev->funcptr == (void *)_impl_emit_add_imm ||
+             log_prev->funcptr == (void *)_impl_emit_sub_imm ||
+             log_prev->funcptr == (void *)_impl_emit_add ||
+             log_prev->funcptr == (void *)_impl_emit_sub) &&
+            log_next->funcptr == (void *)_impl_emit_leave &&
+            log_prev->args[0] == RSP)
+        {
+            emitter_log_erase_nth(1);
+            return 1;
+        }
+        
+        // combine sub/add operations on the same register
+        if ((log_prev->funcptr == (void *)_impl_emit_sub_imm || log_prev->funcptr == (void *)_impl_emit_add_imm) &&
+            (log_next->funcptr == (void *)_impl_emit_sub_imm || log_next->funcptr == (void *)_impl_emit_add_imm) &&
+             log_prev->args[0] == log_next->args[0])
+        {
+            EmitterLog * next = emitter_log_erase_nth(0);
+            EmitterLog * prev = emitter_log_erase_nth(0);
+            if (next->args[1] == 0x8000000000000000 || prev->args[1] == 0x8000000000000000)
+            {
+                emitter_log_add(prev);
+                emitter_log_add(next);
+            }
+            else
+            {
+                int64_t val_prev = prev->args[1];
+                if (log_prev->funcptr == (void *)_impl_emit_sub_imm)
+                    val_prev = -val_prev;
+                
+                int64_t val_next = next->args[1];
+                if (log_next->funcptr == (void *)_impl_emit_sub_imm)
+                    val_next = -val_next;
+                
+                int64_t val = val_prev + val_next;
+                if (val > 2147483647 || (-val) > 2147483647)
+                {
+                    emitter_log_add(prev);
+                    emitter_log_add(next);
+                }
+                else if (val < 0)
+                {
+                    emitter_log_add_2(_impl_emit_sub_imm, prev->args[0], -val);
+                    return 1;
+                }
+                else
+                {
+                    emitter_log_add_2(_impl_emit_add_imm, prev->args[0], val);
+                    return 1;
+                }
+            }
         }
     }
     return 0;
@@ -2046,5 +2208,7 @@ uint8_t emitter_log_try_optimize(void)
 
 void emitter_log_optimize(void)
 {
-    while (emitter_log_try_optimize()) {}
+    //while (emitter_log_try_optimize()) {}
 }
+
+#pragma GCC diagnostic pop

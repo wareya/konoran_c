@@ -1,0 +1,19 @@
+
+void plus_one()
+{
+    return;
+}
+
+void wahahah(funcptr(void, ()) f, f32 a)
+//void wahahah(f32 a, funcptr(void, ()) f)
+{
+    f();
+    return;
+}
+
+void main()
+{
+    wahahah(plus_one, 1.0f32);
+    //wahahah(1.0f32, plus_one);
+    return;
+}

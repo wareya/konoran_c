@@ -72,7 +72,15 @@ f32 add(f32 a, f32 b)
     i64 kge2 = (kge) as i64;
     
     //f32 asdf = r_add_one()(list[0i64] + list[1i64]);
-    return wahahah(r_add_one(), (a + b)) - 1.0f32;
+    print_float(1001.0f64);
+    r_add_one();
+    print_float(1002.0f64);
+    r_add_one()(a + b);
+    print_float(1003.0f64);
+    f32 ret = wahahah(r_add_one(), (a + b)) - 1.0f32;
+    print_float(1004.0f64);
+    return ret;
+    //return 195239.0f32;
 }
 
 
@@ -233,6 +241,7 @@ void func_etc()
     asdf.next = &asdf;
     asdf.data = 172u8;
     
+    
     u8 a = 10u8;
     u8 b = 192u8;
     print_float((b % a) as f64);
@@ -276,6 +285,7 @@ void func_etc()
     print_float((z) as f64);
     
     print_float((add(5.952f32, 2.822f32)) as f64);
+    /*
     
     intrinsic memset(&z, 1u8, 1u64);
     print_float((z) as f64);
@@ -287,6 +297,8 @@ void func_etc()
     print_float((16u8 / 2u8) as f64);
     print_float((16u8 / 1u8) as f64);
     print_float((16u8 / 0u8) as f64);
+    
+    */
     
     return;
 }
@@ -343,6 +355,7 @@ export_extern void main()
     print_float((asdfiew.x) as f64);
     
     func_etc();
+    /*
     // fp cast tests (must saturate)
     print_float((( 6140.6f64) as u64) as f64);
     print_float(((-6140.6f64) as u64) as f64);
@@ -380,6 +393,7 @@ export_extern void main()
         (&size_of_f64) bit_as ptr(u8),
         (0u64) bit_as ptr(u8),
     ];
+    
     
     // test printing format strings
     
@@ -430,7 +444,7 @@ export_extern void main()
     u8 abvwgek = '5';
     u32 abvwgek_u32 = '5'u32;
     
-    
+    */
     // early return test (must not crash)
     return;
     print_float(0.0f64);

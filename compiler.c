@@ -188,6 +188,43 @@ GenericList * list_prepend(GenericList ** list, void * item)
     *list = entry;
     return entry;
 }
+GenericList * list_copy(GenericList * list)
+{
+    GenericList * copy = 0;
+    
+    GenericList * next = list;
+    while (next)
+    {
+        GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
+        memcpy(entry, next, sizeof(GenericList));
+        entry->next = 0;
+        
+        list_add(&copy, entry);
+        
+        next = next->next;
+    }
+    
+    return copy;
+}
+void list_reverse(GenericList ** list)
+{
+    if (!list)
+        return;
+    
+    GenericList * forwards = *list;
+    GenericList * reversed = 0;
+    
+    while (forwards)
+    {
+        GenericList * head = forwards;
+        forwards = forwards->next;
+        
+        head->next = reversed;
+        reversed = head;
+    }
+    
+    *list = reversed;
+}
 
 struct _FuncDef;
 typedef struct _VisibleFunc
@@ -2098,10 +2135,12 @@ void compile_code(Node * ast, int want_ptr)
         printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
+        /*
         emit_add_imm32(RSP, stack_loc);
         log_stack_size_usage(emitter_get_code_len() - 4);
         emit_pop(RBP);
-        //emit_breakpoint();
+        */
+        emit_leave();
         emit_ret();
     } break;
     case LABEL:
@@ -2494,7 +2533,9 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 assert(("too many args to function", !arg_node));
                 
-                arg = funcdef->signature->next;
+                arg = list_copy(funcdef->signature->next);
+                list_reverse(&arg);
+                list_reverse(&argwheres);
                 while (arg)
                 {
                     int64_t where = (int64_t)argwheres->item;
@@ -3066,7 +3107,9 @@ void compile_code(Node * ast, int want_ptr)
         // realign stack if statement produced a value (e.g. function calls)
         if (stack_peek())
         {
-            puts("realigning void stack...");
+            puts("realigning stack...");
+            if (stack_offset == 8)
+                emit_dry_pop_safe();
             stack_pop();
         }
         else if (offs > stack_offset)
@@ -4431,9 +4474,12 @@ void compile(Node * ast)
         }
         
         assert(stack_loc >= 0);
+        /*
         emit_add_imm32(RSP, stack_loc);
         log_stack_size_usage(emitter_get_code_len() - 4);
         emit_pop(RBP);
+        */
+        emit_leave();
         emit_ret();
         
         do_fix_stack_size_usages(stack_loc);
