@@ -2650,7 +2650,6 @@ void compile_code(Node * ast, int want_ptr)
                 Value * value = item->val;
                 assert(("Array indexes must be i64s!", type_is_int(value->type) && type_is_signed(value->type) && value->type->size == 8));
                 
-                // FIXME handle const indexes more efficiently
                 _push_small_if_const(value);
                 emit_pop_safe(RAX);
                 
@@ -2681,9 +2680,9 @@ void compile_code(Node * ast, int want_ptr)
                 
                 if (want_ptr != 0 && !is_on_stack)
                 {
-                    emit_pop_safe(RAX);
-                    emit_add(RAX, RDX, 8);
-                    emit_push_safe(RAX);
+                    emit_pop_safe(RDX);
+                    emit_add(RDX, RAX, 8);
+                    emit_push_safe(RDX);
                     
                     stack_push_new_anywhere(make_ptr_type(inner_type));
                 }
@@ -2693,8 +2692,8 @@ void compile_code(Node * ast, int want_ptr)
                     
                     if (is_on_stack)
                     {
-                        emit_add(RDX, RSP, 8);
-                        emit_mov_reg_preg(RAX, RDX, inner_type->size);
+                        emit_add(RAX, RSP, 8);
+                        emit_mov_reg_preg(RAX, RAX, inner_type->size);
                         emit_shrink_stack_safe(array_size_stack);
                         emit_push_safe(RAX);
                         
@@ -2702,7 +2701,7 @@ void compile_code(Node * ast, int want_ptr)
                     }
                     else if (want_ptr == 0)
                     {
-                        emit_pop_safe(RAX);
+                        emit_pop_safe(RDX);
                         emit_add(RDX, RAX, 8);
                         emit_mov_reg_preg(RAX, RDX, inner_type->size);
                         emit_push_safe(RAX);
@@ -2727,7 +2726,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_mov(RSI, RSP, 8);
                         emit_mov(RDI, RSP, 8);
                         
-                        emit_add(RSI, RDX, 8);
+                        emit_add(RSI, RAX, 8);
                         emit_add_imm(RDI, target_offset);
                         
                         emit_mov_imm(RCX, inner_type->size, 8);
@@ -2741,7 +2740,7 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         // on heap, expand stack and memcpy onto stack
                         emit_pop_safe(RSI);
-                        emit_add(RSI, RDX, 8);
+                        emit_add(RSI, RAX, 8);
                         emit_expand_stack_safe(inner_size_stack);
                         emit_mov(RDI, RSP, 8);
                         emit_mov_imm(RCX, inner_type->size, 8);
@@ -2988,9 +2987,9 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 else
                 {
-                    size_t loc = first->loc;
-                    if (first->mem)
-                        loc = push_static_data(first->mem, first->type->size);
+                    size_t loc = next->loc;
+                    if (next->mem)
+                        loc = push_static_data(next->mem, next->type->size);
                     
                     emit_mov_imm(RSI, loc, 8);
                     log_static_relocation(emitter_get_code_len() - 8, loc);

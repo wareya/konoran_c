@@ -7,7 +7,7 @@
 extern byte_buffer * code;
 
 // for debugging. disables optimization.
-#define EMITTER_ALWAYS_FLUSH
+//#define EMITTER_ALWAYS_FLUSH
 
 enum {
     RAX,
@@ -36,8 +36,6 @@ enum {
     XMM5,
     XMM6,
     XMM7,
-    
-    STACK__ = 0x7FFF, // for ABI stuff only
 };
 
 

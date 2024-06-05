@@ -1,25 +1,20 @@
 
+struct Vec {
+    f64 x;
+}
 
-//array(u32, 1) agg_nop(array(u32, 1) a, f64 b)
-array(u32, 1) agg_nop(array(u32, 1) a, u64 b)
-{
-    return a;
+struct Body {
+    Vec pos;
 }
-/*
-Vector3 vec3_mul_f64(Vector3 a, f64 b)
-{
-    a.x = a.x * b;
-    a.y = a.y * b;
-    a.z = a.z * b;
-    return a;
-}
-*/
 
 void main()
 {
-    array(u32, 1) buh = [ 111u32 ];
+    array(Vec, 2) bodies = [
+        Vec { 1.10f64 },
+        Vec { 6.66f64 },
+    ];
     
-    buh = agg_nop(buh, 222u64 );
+    print_float(bodies[1i64].x);
     
     return;
 }

@@ -1,0 +1,21 @@
+
+
+void main()
+{
+    array(f64, 5) floats = [
+        129.14f64,
+        61.01001f64,
+        161.01001f64,
+        25261.01001f64,
+        51263461.01001f64,
+    ];
+    print_float(floats[0i64]);
+    print_float(floats[1i64]);
+    print_float(floats[2i64]);
+    print_float(floats[3i64]);
+    print_float(floats[4i64]);
+    
+    print_float(intrinsic sqrt(16.0f64));
+    print_float(intrinsic sqrt(8.0f64));
+    return;
+}
