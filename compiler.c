@@ -106,6 +106,30 @@ char * strcpy_len(char * str, size_t len)
     return ret;
 }
 
+uint8_t str_ends_with(char * a, char * b)
+{
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    if (len_a < len_b)
+        return 0;
+    if (len_b == 0)
+        return 1;
+    
+    a += len_a - len_b;
+    return strncmp(a, b, len_b) == 0;
+}
+uint8_t str_begins_with(char * a, char * b)
+{
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    if (len_a < len_b)
+        return 0;
+    if (len_b == 0)
+        return 1;
+    
+    return strncmp(a, b, len_b) == 0;
+}
+
 
 size_t guess_alignment_from_size(size_t size)
 {
@@ -286,6 +310,10 @@ uint8_t type_is_signed(Type * type)
 uint8_t type_is_float(Type * type)
 {
     return type->primitive_type >= PRIM_F32 && type->primitive_type <= PRIM_F64;
+}
+uint8_t type_is_primitive(Type * type)
+{
+    return type_is_float(type) || type_is_int(type);
 }
 uint8_t type_is_pointer(Type * type)
 {
@@ -1378,6 +1406,21 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             emit_mul(RDX, size);
             emit_push_safe(RAX);
         }
+        else if (op == '&')
+        {
+            emit_and(RAX, RDX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == '|')
+        {
+            emit_or(RAX, RDX, size);
+            emit_push_safe(RAX);
+        }
+        else if (op == '^')
+        {
+            emit_xor(RAX, RDX, size);
+            emit_push_safe(RAX);
+        }
         else if (op == 'd' || op == 'r' || op == '/' || op == '%')
         {
             uint8_t is_div = (op == 'd' || op == '/');
@@ -1985,18 +2028,18 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case INTRINSIC:
     {
-        // only supported intrinsics are sqrt and sqrt_f32
+        // only supported intrinsics are sqrt, sqrt_f32, and memset
         char * text = strcpy_len(ast->first_child->text, ast->first_child->textlen);
         Node * args = nth_child(ast, 1)->first_child;
         
-        assert(args->childcount == 1);
-        compile_code(args->first_child, 0);
-        StackItem * item = stack_pop();
-        assert(item);
-        Value * argval = item->val;
-        
         if (strcmp(text, "sqrt") == 0)
         {
+            assert(args->childcount == 1);
+            compile_code(args->first_child, 0);
+            StackItem * item = stack_pop();
+            assert(item);
+            Value * argval = item->val;
+            
             assert(types_same(argval->type, get_type("f64")));
             if (argval->kind == VAL_CONSTANT)
             {
@@ -2017,6 +2060,12 @@ void compile_code(Node * ast, int want_ptr)
         }
         else if (strcmp(text, "sqrt_f32") == 0)
         {
+            assert(args->childcount == 1);
+            compile_code(args->first_child, 0);
+            StackItem * item = stack_pop();
+            assert(item);
+            Value * argval = item->val;
+            
             assert(types_same(argval->type, get_type("f32")));
             if (argval->kind == VAL_CONSTANT)
             {
@@ -2034,6 +2083,36 @@ void compile_code(Node * ast, int want_ptr)
                 emit_xmm_push_safe(XMM0, 4);
                 stack_push(item);
             }
+        }
+        else if (strcmp(text, "memset") == 0)
+        {
+            assert(args->childcount == 3);
+            
+            compile_code(nth_child(args, 0), 0);
+            StackItem * item = stack_pop();
+            assert(item);
+            Value * arg_1 = item->val;
+            assert(type_is_pointer(arg_1->type));
+            _push_small_if_const(arg_1);
+            
+            compile_code(nth_child(args, 1), 0);
+            item = stack_pop();
+            assert(item);
+            Value * arg_2 = item->val;
+            assert(types_same(arg_2->type, get_type("u8")));
+            _push_small_if_const(arg_2);
+            
+            compile_code(nth_child(args, 2), 0);
+            item = stack_pop();
+            assert(item);
+            Value * arg_3 = item->val;
+            assert(types_same(arg_3->type, get_type("u64")));
+            _push_small_if_const(arg_3);
+            
+            emit_pop_safe(RCX); // count
+            emit_pop_safe(RAX); // value
+            emit_pop_safe(RDI); // location
+            emit_rep_stos(1);
         }
         else
         {
@@ -2321,7 +2400,6 @@ void compile_code(Node * ast, int want_ptr)
                 
                 assert(expr->kind == VAL_STACK_TOP);
                 emit_mov_offset(RAX, RSP, arg_storage_size + arg_stack_size, 8);
-                //emit_breakpoint();
                 emit_call(RAX);
                 
                 emit_shrink_stack_safe(arg_storage_size + arg_stack_size);
@@ -3046,6 +3124,8 @@ void compile_code(Node * ast, int want_ptr)
         Type * orig_type = expr->type;
         Type * new_type = parse_type(nth_child(ast, 1));
         
+        assert(orig_type->size == new_type->size);
+        
         // FIXME: how are function pointer casts defined again...? do they act the same as data pointers?
         if (type_is_pointer(orig_type) && type_is_pointer(new_type))
         {
@@ -3073,9 +3153,39 @@ void compile_code(Node * ast, int want_ptr)
             expr->type = new_type;
             stack_push(stackitem);
         }
+        else if (type_is_primitive(new_type) && type_is_primitive(orig_type))
+        {
+            expr->type = new_type;
+            stack_push(stackitem);
+        }
+        else if (type_is_composite(new_type) && type_is_composite(orig_type))
+        {
+            expr->type = new_type;
+            stack_push(stackitem);
+        }
+        else if (type_is_composite(new_type) && type_is_primitive(orig_type))
+        {
+            if (expr->kind == VAL_CONSTANT)
+                assert(("FIXME/TODO: const primitive->composite cast", 0));
+            else
+            {
+                expr->type = new_type;
+                stack_push(stackitem);
+            }
+        }
+        else if (type_is_composite(orig_type) && type_is_primitive(new_type))
+        {
+            if (expr->kind == VAL_CONSTANT)
+                assert(("FIXME/TODO: const composite->primitive cast", 0));
+            else
+            {
+                expr->type = new_type;
+                stack_push(stackitem);
+            }
+        }
         else
         {
-            assert(("FIXME/TODO: composite <-> primitive casts (complicated because of constexprs)", 0));
+            assert(("unknown bitcast type pair", 0));
         }
     } break;
     case CAST:
@@ -3400,7 +3510,10 @@ void compile_code(Node * ast, int want_ptr)
         {
             if ((c & 0xE0) == 0xC0)
             {
-                assert(ast->textlen == 4);
+                if (last_char == '2')
+                    assert(ast->textlen == 7);
+                else
+                    assert(ast->textlen == 4);
                 c &= 0x1F;
                 
                 assert((text[2] & 0xC0) == 0x80);
@@ -3413,7 +3526,10 @@ void compile_code(Node * ast, int want_ptr)
             }
             else if ((c & 0xF0) == 0xE0)
             {
-                assert(ast->textlen == 5);
+                if (last_char == '2')
+                    assert(ast->textlen == 8);
+                else
+                    assert(ast->textlen == 5);
                 c &= 0x0F;
                 
                 c <<= 4;
@@ -3429,7 +3545,10 @@ void compile_code(Node * ast, int want_ptr)
             }
             else if ((c & 0xF8) == 0xF0)
             {
-                assert(ast->textlen == 6);
+                if (last_char == '2')
+                    assert(ast->textlen == 9);
+                else
+                    assert(ast->textlen == 6);
                 c &= 0x07;
                 
                 c <<= 3;
@@ -3451,7 +3570,12 @@ void compile_code(Node * ast, int want_ptr)
                 assert(("broken utf-8 char", 0));
         }
         else
-            assert(ast->textlen == 3);
+        {
+            if (last_char == '2')
+                assert(ast->textlen == 6);
+            else
+                assert(ast->textlen == 3);
+        }
         
         if (last_char == '2')
         {
@@ -3468,6 +3592,64 @@ void compile_code(Node * ast, int want_ptr)
             value->kind = VAL_CONSTANT;
             value->_val = c;
             stack_push_new(value);
+        }
+    } break;
+    case STRING:
+    {
+        char * text = strcpy_len(ast->text, ast->textlen);
+        size_t buffer_len = strlen(text) + 1;
+        char * output_str = zero_alloc(buffer_len);
+        printf("context: `%s`\n", text);
+        
+        uint8_t is_array = str_ends_with(text, "array") || str_ends_with(text, "array_nonull");
+        uint8_t is_nonull = str_ends_with(text, "nonull");
+        
+        size_t j = 0;
+        for (size_t i = 1; i < buffer_len-1; i++)
+        {
+            char c = text[i];
+            if (c == '\\')
+            {
+                i++;
+                char c2 = text[i];
+                if (c2 == 'n')
+                    c2 = '\n';
+                else if (c2 == 'r')
+                    c2 = '\r';
+                else if (c2 == 't')
+                    c2 = '\t';
+                else if (c2 == '"')
+                    c2 = '"';
+                else if (c2 == '\\')
+                    c2 = '\\';
+                else
+                    assert(("unknown escape character", 0));
+                output_str[j++] = c2;
+            }
+            else
+                output_str[j++] = c;
+        }
+        if (!is_nonull)
+            j += 1;
+        assert(j <= buffer_len);
+        
+        if (is_array)
+        {
+            assert(("TODO: array string literals", 0));
+        }
+        else
+        {
+            size_t loc = push_static_data((uint8_t *)output_str, j);
+            
+            emit_mov_imm(RAX, loc, 8);
+            log_static_relocation(emitter_get_code_len() - 8, loc);
+            emit_push_safe(RAX);
+            
+            Value * val = new_value(make_ptr_type(get_type("u8")));
+            val->kind = VAL_CONSTANT;
+            val->loc = loc;
+            
+            stack_push_new(val);
         }
     } break;
     case NFLOAT:
@@ -4103,6 +4285,37 @@ void compile(Node * ast)
     }
 }
 
+void do_symbol_relocations(void)
+{
+    GenericList * reloc = symbol_relocs;
+    while (reloc)
+    {
+        uint64_t loc = reloc->payload;
+        char * symbol_name = (char *)reloc->item;
+        
+        FuncDef * funcdef = funcdefs;
+        while (funcdef)
+        {
+            if (strcmp(symbol_name, funcdef->name) == 0)
+                break;
+            funcdef = funcdef->next;
+        }
+        if (!funcdef)
+        {
+            printf("culprit: '%s'\n", symbol_name);
+            assert(("failed to find symbol/function", 0));
+        }
+        uint64_t func_loc = funcdef->code_offset;
+        
+        int64_t diff = func_loc - (loc + 4);
+        assert(diff >= -2147483648 && diff <= 2147483647);
+        
+        memcpy(code->data + loc, &diff, 4);
+        
+        reloc = reloc->next;
+    }
+}
+
 int compile_program(Node * ast, byte_buffer ** ret_code)
 {
     code = (byte_buffer *)zero_alloc(sizeof(byte_buffer));
@@ -4139,33 +4352,7 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
     compile(ast);
     
     // do relocations
-    GenericList * reloc = symbol_relocs;
-    while (reloc)
-    {
-        uint64_t loc = reloc->payload;
-        char * symbol_name = (char *)reloc->item;
-        
-        FuncDef * funcdef = funcdefs;
-        while (funcdef)
-        {
-            if (strcmp(symbol_name, funcdef->name) == 0)
-                break;
-            funcdef = funcdef->next;
-        }
-        if (!funcdef)
-        {
-            printf("culprit: '%s'\n", symbol_name);
-            assert(("failed to find symbol/function", 0));
-        }
-        uint64_t func_loc = funcdef->code_offset;
-        
-        int64_t diff = func_loc - (loc + 4);
-        assert(diff >= -2147483648 && diff <= 2147483647);
-        
-        memcpy(code->data + loc, &diff, 4);
-        
-        reloc = reloc->next;
-    }
+    do_symbol_relocations();
     
     *ret_code = code;
     return 0;

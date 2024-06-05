@@ -1228,7 +1228,22 @@ void emit_lea(int reg_d, int reg_s, int64_t offset)
         0x8D // actual op
     );
 }
-// copy size bytes from RSI into RDI
+// copy AL into RCX bytes of memory starting at RDI
+// thrashes RCX, RDI
+void emit_rep_stos(int chunk_size)
+{
+    last_is_terminator = 0;
+    assert(chunk_size == 1 || chunk_size == 2 || chunk_size == 4 || chunk_size == 8);
+    
+    if (chunk_size == 2)
+        byte_push(code, 0x66);
+    byte_push(code, 0xF3);
+    if (chunk_size == 8)
+        byte_push(code, 0x48);
+    
+    byte_push(code, (chunk_size == 1) ? 0xAA : 0xAB);
+}
+// copy RCX bytes from RSI into RDI
 void _emit_rep_movs(int chunk_size)
 {
     last_is_terminator = 0;
@@ -1239,6 +1254,7 @@ void _emit_rep_movs(int chunk_size)
     byte_push(code, 0xF3);
     if (chunk_size == 8)
         byte_push(code, 0x48);
+    
     byte_push(code, (chunk_size == 1) ? 0xA4 : 0xA5);
 }
 // registers must be pre-filled: RSI, RDI, RCX

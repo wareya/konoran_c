@@ -5,17 +5,19 @@
 
 
 
+/*
 f32 return_literal()
 {
     f32 x;
+exit:
     return 16.1f32;
 }
+*/
 
 struct Vec2
 {
     f32 x;
     f32 y;
-//    u8 _; // make Vec2 larger than 8 bytes so it breaks implementations that only support 8-byte expressions
 }
 
 void add_to_x(ptr(Vec2) vec)
@@ -28,7 +30,6 @@ void add_to_x(ptr(Vec2) vec)
 void struct_literal()
 {
     Vec2 val = Vec2 { 1.0f32, 0.5f32 };
-    
     print_bytes(((&val) bit_as ptr(u8)), 8u64);
     
     val = Vec2 { 2.0001f32, 0.4999342f32 };
@@ -62,6 +63,7 @@ f32 add(f32 a, f32 b)
     vec.x = a;
     vec.y = b;
     //a = vec.x + vec.y - 1.0f32;
+    
     array(f32, 2) list;
     list[0i64] = a;
     *(&(list[1i64])) = b;
@@ -69,21 +71,8 @@ f32 add(f32 a, f32 b)
     u64 kge = 5931u64;
     i64 kge2 = (kge) as i64;
     
-    funcptr(f32, (f32)) asasa = r_add_one();
-    print_bytes((&asasa) bit_as ptr(u8), 8u64);
-    
-    u64 aafaffa = (add) bit_as u64;
-    print_bytes((&aafaffa) bit_as ptr(u8), 8u64);
-    
-    f32 agaga = list[0i64] + list[1i64];
-    f32 asdf0 = plus_one(agaga);
-    print_float(9592.0f64);
-    f32 asdf = asasa(agaga);
-    print_float(9592.01f64);
-    
     //f32 asdf = r_add_one()(list[0i64] + list[1i64]);
     return wahahah(r_add_one(), (a + b)) - 1.0f32;
-    //return vec.x + vec.y;
 }
 
 
@@ -230,8 +219,7 @@ f64 vec3_sq_length(Vector3 a)
 }
 f64 vec3_length(Vector3 a)
 {
-    //return intrinsic sqrt(vec3_sq_length(a));
-    return vec3_sq_length(a);
+    return intrinsic sqrt(vec3_sq_length(a));
 }
 
 struct linked_list {
@@ -247,8 +235,7 @@ void func_etc()
     
     u8 a = 10u8;
     u8 b = 192u8;
-    f64 asdfaaa = (b % a) as f64;
-    print_float(asdfaaa);
+    print_float((b % a) as f64);
     
     i8 a2 = -10i8;
     i8 b2 = -112i8;
@@ -290,10 +277,10 @@ void func_etc()
     
     print_float((add(5.952f32, 2.822f32)) as f64);
     
-    //intrinsic memset(&z, 1u8, 1u64);
+    intrinsic memset(&z, 1u8, 1u64);
     print_float((z) as f64);
     
-    //intrinsic memset(&z, 16u8, 1u64);
+    intrinsic memset(&z, 16u8, 1u64);
     print_float((z) as f64);
     
     print_float((16u8 / 3u8) as f64);
@@ -356,7 +343,6 @@ export_extern void main()
     print_float((asdfiew.x) as f64);
     
     func_etc();
-    
     // fp cast tests (must saturate)
     print_float((( 6140.6f64) as u64) as f64);
     print_float(((-6140.6f64) as u64) as f64);
@@ -410,6 +396,7 @@ export_extern void main()
     print_float((temp_test2.y) as f64);
     
     // test bitcasting between array and primitive
+    
     array(u16, 2) gwerksd = [0x1043u16, 0xF00Du16];
     u32 asdgwreids = (gwerksd) bit_as u32;
     u64 asdgwreids_printable = (asdgwreids) as u64;
@@ -417,7 +404,6 @@ export_extern void main()
         (&asdgwreids_printable) bit_as ptr(u8),
     ]) bit_as ptr(ptr(u8)));
     
-    /*
     u32 testvar = 0x1043F00Du32;
     print_fmt("0x%X\n",
         (&[
@@ -438,7 +424,6 @@ export_extern void main()
     
     
     // early return test (must not crash)
-    */
     return;
     print_float(0.0f64);
     return;
