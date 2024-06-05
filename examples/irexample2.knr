@@ -285,7 +285,6 @@ void func_etc()
     print_float((z) as f64);
     
     print_float((add(5.952f32, 2.822f32)) as f64);
-    /*
     
     intrinsic memset(&z, 1u8, 1u64);
     print_float((z) as f64);
@@ -297,8 +296,6 @@ void func_etc()
     print_float((16u8 / 2u8) as f64);
     print_float((16u8 / 1u8) as f64);
     print_float((16u8 / 0u8) as f64);
-    
-    */
     
     return;
 }
@@ -355,7 +352,6 @@ export_extern void main()
     print_float((asdfiew.x) as f64);
     
     func_etc();
-    /*
     // fp cast tests (must saturate)
     print_float((( 6140.6f64) as u64) as f64);
     print_float(((-6140.6f64) as u64) as f64);
@@ -444,7 +440,6 @@ export_extern void main()
     u8 abvwgek = '5';
     u32 abvwgek_u32 = '5'u32;
     
-    */
     // early return test (must not crash)
     return;
     print_float(0.0f64);

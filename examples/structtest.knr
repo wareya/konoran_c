@@ -1,0 +1,29 @@
+
+struct Vector3 {
+    f64 x;
+    f64 y;
+    f64 z;
+}
+
+Vector3 vec3_nop(Vector3 a, f64 b)
+{
+    return a;
+}
+/*
+Vector3 vec3_mul_f64(Vector3 a, f64 b)
+{
+    a.x = a.x * b;
+    a.y = a.y * b;
+    a.z = a.z * b;
+    return a;
+}
+*/
+
+void main()
+{
+    Vector3 buh = Vector3 { 1.11f64, 4.01f64, 124.0142f64 };
+    
+    buh = vec3_nop(buh, 0.819529f64);
+    
+    return;
+}
