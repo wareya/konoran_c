@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <assert.h>
 
 enum {
     ABI_WIN,

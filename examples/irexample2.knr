@@ -400,9 +400,17 @@ export_extern void main()
     array(u16, 2) gwerksd = [0x1043u16, 0xF00Du16];
     u32 asdgwreids = (gwerksd) bit_as u32;
     u64 asdgwreids_printable = (asdgwreids) as u64;
-    print_fmt("0x%X\n", (&[
-        (&asdgwreids_printable) bit_as ptr(u8),
-    ]) bit_as ptr(ptr(u8)));
+    ptr(u64) asdgwreids_printable_ptr = &asdgwreids_printable;
+    array(ptr(u8), 1) aaafa = [
+        (asdgwreids_printable_ptr) bit_as ptr(u8),
+    ];
+    ptr(ptr(u8)) aaaafaaa = (&aaafa) bit_as ptr(ptr(u8));
+    
+    
+    f64 a = 143.04f64;
+    a = 143.04f64;
+    //print_fmt((&['0', 'x', '%', 'X', '\n', 0u8]) bit_as ptr(u8), aaaafaaa);
+    print_fmt("0x%X\n", aaaafaaa);
     
     u32 testvar = 0x1043F00Du32;
     print_fmt("0x%X\n",

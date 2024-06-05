@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <assert.h>
 #include "buffers.h"
 
 // TODO: emit log and relocation info
