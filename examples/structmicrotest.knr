@@ -1,0 +1,19 @@
+
+struct Vec {
+    f64 x;
+}
+
+void main()
+{
+    array(Vec, 2) bodies = [
+        Vec { 1.10f64 },
+        Vec { 6.60f64 },
+    ];
+    
+    u8 asdf = bodies[0i64].x == 1.10f64;
+    
+    print_float(bodies[0i64].x);
+    print_float((asdf) as f64);
+    
+    return;
+}

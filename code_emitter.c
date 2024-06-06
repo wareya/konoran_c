@@ -1652,6 +1652,19 @@ void emit_mov_imm(int reg, uint64_t val, size_t size)
 {
     emitter_log_add_3(_impl_emit_mov_imm, reg, val, size);
 }
+void _impl_emit_mov_imm64(int reg, uint64_t val)
+{
+    size_t size = 8;
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
+    bytes_push_int(code, (uint64_t)val, size);
+}
+void emit_mov_imm64(int reg, uint64_t val)
+{
+    emitter_log_add_2(_impl_emit_mov_imm64, reg, val);
+}
 void _impl_emit_lea_rip_offset(int reg, int64_t offset)
 {
     assert(offset >= -2147483648 && offset <= 2147483647);
@@ -2002,6 +2015,9 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_mov_imm)
         _impl_emit_mov_imm(log->args[0], log->args[1], log->args[2]);
     
+    else if (log->funcptr == (void *)_impl_emit_mov_imm64)
+        _impl_emit_mov_imm64(log->args[0], log->args[1]);
+    
     else if (log->funcptr == (void *)_impl_emit_lea_rip_offset)
         _impl_emit_lea_rip_offset(log->args[0], log->args[1]);
     
@@ -2218,7 +2234,7 @@ uint8_t emitter_log_try_optimize(void)
 
 void emitter_log_optimize(void)
 {
-    while (emitter_log_try_optimize()) {}
+    //while (emitter_log_try_optimize()) {}
 }
 
 #pragma GCC diagnostic pop

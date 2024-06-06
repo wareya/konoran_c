@@ -638,7 +638,7 @@ uint64_t push_data_to(uint8_t * data, size_t len, byte_buffer * buf)
         for(size_t i = 0; i < len; i++)
             byte_push(buf, 0);
     }
-    return loc + (uint64_t)(buf->data);
+    return loc;// + (uint64_t)(buf->data);
 }
 uint64_t push_static_data(uint8_t * data, size_t len)
 {
@@ -2137,11 +2137,6 @@ void compile_code(Node * ast, int want_ptr)
         printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
-        /*
-        emit_add_imm32(RSP, stack_loc);
-        log_stack_size_usage(emitter_get_code_len() - 4);
-        emit_pop(RBP);
-        */
         emit_leave();
         emit_ret();
     } break;
@@ -2324,7 +2319,7 @@ void compile_code(Node * ast, int want_ptr)
             // FIXME aggregates
             assert(var->val->type->size <= 8);
             
-            emit_mov_imm(RAX, var->val->loc, 8);
+            emit_mov_imm64(RAX, var->val->loc);
             
             if (var->val->kind == VAL_GLOBAL)
                 log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
@@ -2394,7 +2389,7 @@ void compile_code(Node * ast, int want_ptr)
         {
             if (var->val->kind == VAL_GLOBAL)
             {
-                emit_mov_imm(RAX, var->val->loc, 8);
+                emit_mov_imm64(RAX, var->val->loc);
                 log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
                 emit_push_safe(RAX);
                 
@@ -2960,7 +2955,7 @@ void compile_code(Node * ast, int want_ptr)
                 if (first->mem)
                     loc = push_static_data(first->mem, first->type->size);
                 
-                emit_mov_imm(RSI, loc, 8);
+                emit_mov_imm64(RSI, loc);
                 log_static_relocation(emitter_get_code_len() - 8, loc);
                 
                 emit_mov(RDI, RSP, 8);
@@ -2991,7 +2986,7 @@ void compile_code(Node * ast, int want_ptr)
                     if (next->mem)
                         loc = push_static_data(next->mem, next->type->size);
                     
-                    emit_mov_imm(RSI, loc, 8);
+                    emit_mov_imm64(RSI, loc);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                     
                     emit_lea(RDI, RSP, inner_size * i);
@@ -3214,12 +3209,12 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm(RSI, loc, 8);
+                    emit_mov_imm64(RSI, loc);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                 }
                 else
                 {
-                    emit_mov_imm(RSI, expr->loc, 8);
+                    emit_mov_imm64(RSI, expr->loc);
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
@@ -3271,12 +3266,12 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm(RSI, loc, 8);
+                    emit_mov_imm64(RSI, loc);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                 }
                 else
                 {
-                    emit_mov_imm(RSI, expr->loc, 8);
+                    emit_mov_imm64(RSI, expr->loc);
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
@@ -3849,7 +3844,7 @@ void compile_code(Node * ast, int want_ptr)
         {
             size_t loc = push_static_data((uint8_t *)output_str, j);
             
-            emit_mov_imm(RAX, loc, 8);
+            emit_mov_imm64(RAX, loc);
             log_static_relocation(emitter_get_code_len() - 8, loc);
             emit_push_safe(RAX);
             
@@ -4248,13 +4243,6 @@ void compile_defs_compile(Node * ast)
         do_fix_stack_size_usages(stack_loc);
         // fix up jumps
         do_fix_jumps();
-        
-        /*
-        emit_add_imm32(RSP, stack_loc);
-        log_stack_size_usage(emitter_get_code_len() - 4);
-        emit_pop(RBP);
-        emit_ret();
-        */
     } break;
     default: {}
     }
@@ -4332,7 +4320,7 @@ void compile_globals_collect(Node * ast)
                 {
                     emit_pop_safe(RDX);
                     // move variable location into RAX
-                    emit_mov_imm(RAX, var->val->loc, 8);
+                    emit_mov_imm64(RAX, var->val->loc);
                     log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
                     emit_mov_preg_reg(RAX, RDX, val->val->type->size);
                 }
@@ -4461,14 +4449,13 @@ void compile(Node * ast)
         funcdef->vismod = "";
 
         add_visible_function(funcdef, emitter_get_code_len());
-        emit_push(RBP);
-        emit_mov(RBP, RSP, 8);
         
         stack_loc = 0;
         local_vars = 0;
         
+        emit_push(RBP);
+        emit_mov(RBP, RSP, 8);
         emit_sub_imm32(RSP, stack_loc);
-        
         log_stack_size_usage(emitter_get_code_len() - 4);
         
         next = ast->first_child;
@@ -4479,11 +4466,6 @@ void compile(Node * ast)
         }
         
         assert(stack_loc >= 0);
-        /*
-        emit_add_imm32(RSP, stack_loc);
-        log_stack_size_usage(emitter_get_code_len() - 4);
-        emit_pop(RBP);
-        */
         emit_leave();
         emit_ret();
         
@@ -4538,6 +4520,38 @@ void do_symbol_relocations(void)
     }
 }
 
+void do_static_relocations(void)
+{
+    GenericList * reloc = static_relocs;
+    while (reloc)
+    {
+        uint64_t loc = (uint64_t)reloc->item;
+        uint64_t offset = reloc->payload;
+        
+        uint64_t addr = (uint64_t)static_data->data + offset;
+        
+        memcpy(code->data + loc, &addr, 8);
+        
+        reloc = reloc->next;
+    }
+}
+
+void do_global_relocations(void)
+{
+    GenericList * reloc = global_relocs;
+    while (reloc)
+    {
+        uint64_t loc = (uint64_t)reloc->item;
+        uint64_t offset = reloc->payload;
+        
+        uint64_t addr = (uint64_t)global_data->data + offset;
+        
+        memcpy(code->data + loc, &addr, 8);
+        
+        reloc = reloc->next;
+    }
+}
+
 int compile_program(Node * ast, byte_buffer ** ret_code)
 {
     code = (byte_buffer *)zero_alloc(sizeof(byte_buffer));
@@ -4575,6 +4589,8 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
     
     // do relocations
     do_symbol_relocations();
+    do_static_relocations();
+    //do_global_relocations();
     
     *ret_code = code;
     return 0;

@@ -3,15 +3,11 @@ struct Vec {
     f64 x;
 }
 
-struct Body {
-    Vec pos;
-}
-
 Vec vec_sub_vec(Vec a, Vec b)
 {
     print_float(a.x);
     print_float(b.x);
-    a.x = a.x - b.x;
+    a.x = 0.0f64;
     print_float(a.x);
     return a;
 }

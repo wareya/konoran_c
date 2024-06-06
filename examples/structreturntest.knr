@@ -1,0 +1,24 @@
+
+struct Vec {
+    f64 x;
+}
+
+Vec vec_sub_vec(Vec a, Vec b)
+{
+    a.x = 0.0f64;
+    return a;
+}
+
+void main()
+{
+    array(Vec, 2) bodies = [
+        Vec { 1.10f64 },
+        Vec { 6.60f64 },
+    ];
+    
+    print_float(bodies[0i64].x);
+    bodies[0i64] = vec_sub_vec(bodies[0i64], bodies[0i64]);
+    print_float(bodies[0i64].x);
+    
+    return;
+}
