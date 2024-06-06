@@ -136,7 +136,7 @@ void offset_momentum(ptr(array(Body, 5)) bodies)
     constexpr f64 PI = 3.141592653589793f64;
     constexpr f64 SOLAR_MASS = 4.0f64 * PI * PI;
     constexpr f64 DAYS_PER_YEAR = 365.24f64;
-
+    
     i64 i = 1i64;
     loop_head:
         f64 ratio = (*bodies)[i].mass / SOLAR_MASS;
@@ -185,7 +185,9 @@ void nbody_bench(u64 count)
         }
     ];
     
+    print_float(bodies[0i64].vel.x);
     offset_momentum(&bodies);
+    print_float(bodies[0i64].vel.x);
     
     f64 start_energy = energy(&bodies);
     print_float(start_energy);

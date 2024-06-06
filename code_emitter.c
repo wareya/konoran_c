@@ -1769,20 +1769,20 @@ void _emit_rep_movs(int chunk_size)
     
     byte_push(code, (chunk_size == 1) ? 0xA4 : 0xA5);
 }
-// registers must be pre-filled: RSI, RDI, RCX
-// thrashes RCX, RSI, RDI, DF (direction flag)
+/*
 void _impl_emit_rep_movs(int chunk_size)
 {
     // CLD
     byte_push(code, 0xFC);
     _emit_rep_movs(chunk_size);
 }
+// registers must be pre-filled: RSI, RDI, RCX
+// thrashes RCX, RSI, RDI, DF (direction flag)
 void emit_rep_movs(int chunk_size)
 {
     emitter_log_add_1(_impl_emit_rep_movs, chunk_size);
 }
-// registers must be pre-filled: RSI, RDI
-// thrashes RCX, RSI, RDI, DF (direction flag)
+*/
 void _impl_emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
 {
     if (direction_is_down)
@@ -1793,12 +1793,43 @@ void _impl_emit_memcpy_static(size_t count, int chunk_size, int direction_is_dow
      _emit_mov_imm(RCX, count, 8);
      _emit_rep_movs(chunk_size);
 }
-void emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
+/*
+void _emit_push_preg(int reg)
 {
-    emitter_log_add_3(_impl_emit_memcpy_static, count, chunk_size, direction_is_down);
+// ff 36                   push   QWORD PTR [rsi]
+// ff 30                   push   QWORD PTR [rax]
+// ff 34 24                push   QWORD PTR [rsp]
+// ff 75 00                push   QWORD PTR [rbp+0x0]
+// 41 ff 30                push   QWORD PTR [r8]
+// 41 ff 34 24             push   QWORD PTR [r12]
+// 41 ff 75 00             push   QWORD PTR [r13+0x0]
 }
-// registers must be pre-filled: RSI, RDI, RCX
+*/
+// registers must be pre-filled: RSI, RDI
 // thrashes RCX, RSI, RDI, DF (direction flag)
+void emit_memcpy_static(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
+{
+    assert(reg_d <= R15 && reg_s <= R15);
+    if (chunk_size * count == 8 && !direction_is_down)
+    {
+        emitter_log_add_3(_impl_emit_mov_reg_preg, RCX, reg_s, 8);
+        emitter_log_add_3(_impl_emit_mov_preg_reg, reg_d, RCX, 8);
+    }
+    else
+    {
+        assert(reg_s != RDI);
+        assert(reg_d != RSI);
+        
+        if (reg_s != RSI)
+            emitter_log_add_3(_impl_emit_mov, RSI, reg_s, 8);
+        
+        if (reg_d != RDI)
+            emitter_log_add_3(_impl_emit_mov, RDI, reg_d, 8);
+        
+        emitter_log_add_3(_impl_emit_memcpy_static, count, chunk_size, direction_is_down);
+    }
+}
+/*
 void _impl_emit_memcpy_dynamic(int chunk_size, int direction_is_down)
 {
     if (direction_is_down)
@@ -1808,10 +1839,13 @@ void _impl_emit_memcpy_dynamic(int chunk_size, int direction_is_down)
      
      _emit_rep_movs(chunk_size);
 }
+// registers must be pre-filled: RSI, RDI, RCX
+// thrashes RCX, RSI, RDI, DF (direction flag)
 void emit_memcpy_dynamic(int chunk_size, int direction_is_down)
 {
     emitter_log_add_2(_impl_emit_memcpy_dynamic, chunk_size, direction_is_down);
 }
+*/
 void _impl_emit_call(int reg)
 {
     last_is_terminator = 0;
@@ -2033,14 +2067,18 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_rep_stos)
         _impl_emit_rep_stos(log->args[0]);
     
+    /*
     else if (log->funcptr == (void *)_impl_emit_rep_movs)
         _impl_emit_rep_movs(log->args[0]);
+    */
     
     else if (log->funcptr == (void *)_impl_emit_memcpy_static)
         _impl_emit_memcpy_static(log->args[0], log->args[1], log->args[2]);
     
+    /*
     else if (log->funcptr == (void *)_impl_emit_memcpy_dynamic)
         _impl_emit_memcpy_dynamic(log->args[0], log->args[1]);
+    */
     
     else if (log->funcptr == (void *)_impl_emit_call)
         _impl_emit_call(log->args[0]);
@@ -2234,7 +2272,7 @@ uint8_t emitter_log_try_optimize(void)
 
 void emitter_log_optimize(void)
 {
-    //while (emitter_log_try_optimize()) {}
+    while (emitter_log_try_optimize()) {}
 }
 
 #pragma GCC diagnostic pop

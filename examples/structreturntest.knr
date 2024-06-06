@@ -3,6 +3,10 @@ struct Vec {
     f64 x;
 }
 
+struct Body {
+    Vec pos;
+}
+
 Vec vec_sub_vec(Vec a, Vec b)
 {
     a.x = 0.0f64;

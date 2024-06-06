@@ -1,0 +1,29 @@
+
+struct Vector3 {
+    f64 x;
+}
+
+struct Body {
+    Vector3 vel;
+}
+
+void modify_inner(ptr(Body) bodies)
+{
+    Vector3 a = Vector3 { 0.5f64 };
+    (*bodies).vel = a;
+    
+    return;
+}
+
+
+void main()
+{
+    Body body = Body { Vector3 { 1.10f64  } };
+    
+    print_float(body.vel.x);
+    modify_inner(&body);
+    print_float(body.vel.x);
+    
+    return;
+}
+
