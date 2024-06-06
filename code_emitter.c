@@ -1785,12 +1785,13 @@ void emit_rep_movs(int chunk_size)
 */
 void _impl_emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
 {
+     _emit_mov_imm(RCX, count, 8);
+     
     if (direction_is_down)
         byte_push(code, 0xFD); // STD
     else
         byte_push(code, 0xFC); // CLD
      
-     _emit_mov_imm(RCX, count, 8);
      _emit_rep_movs(chunk_size);
 }
 /*

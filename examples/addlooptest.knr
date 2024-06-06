@@ -1,0 +1,27 @@
+
+struct Vec {
+    f64 x;
+    f64 y;
+    f64 z;
+    f64 w;
+    f64 q;
+}
+
+Vec vec_add_vec(Vec a)
+{
+    return a;
+}
+
+void main()
+{
+    Vec a = Vec { 1.01f64, 0.401f64, 0.156f64, 10.15f64, 3.14159f64 };
+    
+    a = vec_add_vec(a);
+    
+    print_float(a.x);
+    print_float(a.y);
+    print_float(a.z);
+    print_float(a.w);
+    print_float(a.q);
+    return;
+}

@@ -161,12 +161,8 @@ typedef struct _GenericList
     struct _GenericList * next;
 } GenericList;
 
-GenericList * list_add(GenericList ** list, void * item)
+GenericList * list_add_entry(GenericList ** list, GenericList * entry)
 {
-    GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
-    entry->item = item;
-    entry->next = 0;
-    
     if (!*list)
     {
         *list = entry;
@@ -180,6 +176,14 @@ GenericList * list_add(GenericList ** list, void * item)
     
     return entry;
 }
+GenericList * list_add(GenericList ** list, void * item)
+{
+    GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
+    entry->item = item;
+    entry->next = 0;
+    
+    return list_add_entry(list, entry);
+}
 GenericList * list_prepend(GenericList ** list, void * item)
 {
     GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
@@ -192,16 +196,14 @@ GenericList * list_copy(GenericList * list)
 {
     GenericList * copy = 0;
     
-    GenericList * next = list;
-    while (next)
+    while (list)
     {
         GenericList * entry = (GenericList *)zero_alloc(sizeof(GenericList));
-        memcpy(entry, next, sizeof(GenericList));
-        entry->next = 0;
+        entry->item = list->item;
+        entry->payload = list->payload;
+        list_add_entry(&copy, entry);
         
-        list_add(&copy, entry);
-        
-        next = next->next;
+        list = list->next;
     }
     
     return copy;
@@ -2134,6 +2136,11 @@ void compile_code(Node * ast, int want_ptr)
         printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
+        if (abi == ABI_WIN)
+        {
+            emit_pop(RSI);
+            emit_pop(RDI);
+        }
         emit_leave();
         emit_ret();
     } break;
@@ -2483,6 +2490,7 @@ void compile_code(Node * ast, int want_ptr)
                 ptrdiff_t arg_storage_used = 0;
                 arg = funcdef->signature->next;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
+                size_t rsp_far_offset = 0;
                 while (arg)
                 {
                     assert(("too few args to function", arg_node));
@@ -2503,7 +2511,9 @@ void compile_code(Node * ast, int want_ptr)
                     if (type_is_composite(type))
                     {
                         size_t size = guess_stack_size_from_size(type->size);
-                        emit_lea(RAX, RSP, arg_stack_size + arg_storage_used);
+                        
+                        ////// this here
+                        emit_lea(RAX, RSP, arg_stack_size + arg_storage_used + rsp_far_offset);
                         
                         if (arg_expr->kind == VAL_CONSTANT)
                             assert(("TODO store constant composite arg", 0));
@@ -2518,6 +2528,8 @@ void compile_code(Node * ast, int want_ptr)
                     }
                     else
                         _push_small_if_const(arg_expr);
+                    
+                    rsp_far_offset += 8;
                     
                     arg = arg->next;
                     arg_node = arg_node->next_sibling;
@@ -2584,20 +2596,21 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_offset(RAX, RSP, total_stack_expansion, 8);
                 emit_call(RAX);
                 
-                emit_shrink_stack_safe(total_stack_expansion);
-                
-                // pop function address
-                emit_dry_pop_safe();
-                
                 if (type_is_composite(callee_return_type))
                 {
                     size_t size = type_stack_size(callee_return_type);
                     emit_expand_stack_safe(size);
                     
-                    emit_memcpy_static(RSP, RAX, size, 1, 0);
+                    emit_shrink_stack_safe(total_stack_expansion);
+                    emit_dry_pop_safe(); // function address
+                    
+                    emit_memcpy_static(RSP, RAX, callee_return_type->size, 1, 0);
                 }
                 else
                 {
+                    emit_shrink_stack_safe(total_stack_expansion);
+                    emit_dry_pop_safe(); // function address
+                    
                     // push return val
                     if (type_is_float(callee_return_type))
                         emit_xmm_push_safe(XMM0, 8);
@@ -2933,7 +2946,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_imm64(RSI, loc);
                 log_static_relocation(emitter_get_code_len() - 8, loc);
                 
-                emit_memcpy_static(RSP, RSI, inner_size, 1, 0);
+                emit_memcpy_static(RSP, RSI, array_type->inner_type->size, 1, 0);
             }
         }
         
@@ -2964,7 +2977,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     emit_lea(RDI, RSP, inner_size * i);
                     
-                    emit_memcpy_static(RDI, RSI, inner_size, 1, 0);
+                    emit_memcpy_static(RDI, RSI, array_type->inner_type->size, 1, 0);
                 }
             }
             else
@@ -3223,18 +3236,24 @@ void compile_code(Node * ast, int want_ptr)
         printf("%d\n", target->kind);
         printf("stack height: %zu\n", eval_stack_height);
         assert(("tried to assign to constant!", target->kind != VAL_CONSTANT));
-        //assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_ANYWHERE);
         assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_STACK_TOP);
         assert(target);
         assert(expr);
+        
+        if (target->kind == VAL_STACK_TOP)
+        {
+            assert(type_is_pointer(target->type));
+            assert(types_same(target->type->inner_type, expr->type));
+        }
+        else if (target->kind == VAL_STACK_BOTTOM)
+        {
+            assert(types_same(target->type, expr->type));
+        }
         
         if (type_is_composite(expr->type))
         {
             if (expr->kind == VAL_CONSTANT)
             {
-                assert(target->kind == VAL_STACK_TOP);
-                assert(type_is_pointer(target->type));
-                
                 emit_pop_safe(RDI);
                 
                 if (expr->mem)
@@ -3259,13 +3278,6 @@ void compile_code(Node * ast, int want_ptr)
                 printf("%zu, %zu\n", size + 8, stack_offset);
                 assert((ptrdiff_t)size + 8 == stack_offset);
                 
-                assert(target->kind == VAL_STACK_TOP || target->kind == VAL_STACK_BOTTOM);
-                
-                if (target->kind == VAL_STACK_TOP)
-                    assert(type_is_pointer(target->type));
-                else if (target->kind == VAL_STACK_BOTTOM)
-                    assert(type_is_composite(target->type));
-                
                 emit_mov_offset(RDI, RSP, size, 8);
                 emit_memcpy_static(RDI, RSP, expr->type->size, 1, 0);
                 emit_shrink_stack_safe(size + 8);
@@ -3276,7 +3288,6 @@ void compile_code(Node * ast, int want_ptr)
             _push_small_if_const(expr);
             emit_pop_safe(RDX); // value into RDX
             
-            _push_small_if_const(target);
             emit_pop_safe(RAX); // destination location into RAX
             
             emit_mov_preg_reg(RAX, RDX, expr->type->size);
@@ -3916,7 +3927,7 @@ void compile_code(Node * ast, int want_ptr)
                             // destination location
                             size_t aligned_size = type_stack_size(new_type);
                             emit_expand_stack_safe(aligned_size);
-                            emit_memcpy_static(RSP, RSI, aligned_size, 1, 0);
+                            emit_memcpy_static(RSP, RSI, new_type->size, 1, 0);
                         }
                         Value * value = new_value(new_type);
                         value->kind = VAL_STACK_TOP;
@@ -4136,6 +4147,11 @@ void compile_defs_compile(Node * ast)
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
+        if (abi == ABI_WIN)
+        {
+            emit_push(RDI);
+            emit_push(RSI);
+        }
         emit_sub_imm32(RSP, stack_loc);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
@@ -4428,6 +4444,11 @@ void compile(Node * ast)
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
+        if (abi == ABI_WIN)
+        {
+            emit_push(RDI);
+            emit_push(RSI);
+        }
         emit_sub_imm32(RSP, stack_loc);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
@@ -4439,6 +4460,12 @@ void compile(Node * ast)
         }
         
         assert(stack_loc >= 0);
+        
+        if (abi == ABI_WIN)
+        {
+            emit_pop(RSI);
+            emit_pop(RDI);
+        }
         emit_leave();
         emit_ret();
         
