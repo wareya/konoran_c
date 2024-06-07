@@ -275,7 +275,8 @@ void do_fix_stack_size_usages(uint32_t stack_size)
         last = last->next;
     }
     stack_size_usage = 0;
-    //printf("set stack size with %d\n", stack_size);
+    
+    printf("set stack size with %d\n", stack_size);
 }
 
 typedef struct _StructData
@@ -2424,9 +2425,8 @@ void compile_code(Node * ast, int want_ptr)
             case FUNCARGS:
             {
                 size_t stack_offset_at_funcptr = stack_offset;
-                //printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
                 //printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
-                //emit_pop_safe(RAX);
                 
                 Value * expr = stack_pop()->val;
                 //printf("%s %d\n", expr->type->name, expr->type->variant);
@@ -2436,12 +2436,31 @@ void compile_code(Node * ast, int want_ptr)
                 Type * callee_return_type = funcdef->signature->item;
                 GenericList * arg = funcdef->signature->next;
                 
+                // for composite returns
+                int64_t return_slot_size = 0;
                 // for aggregates, which are passed by pointer
-                int64_t return_storage_size = 0;
                 int64_t arg_storage_size = 0;
-                // points to left side of last arg, from the left, from RBP as seen inside callee
+                // points to left side of last arg, from the left
                 int64_t arg_stack_size = abi_get_min_stack_size();
+                arg_stack_size += 8; // get pointer on right side of last arg, not left side
+                arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
+                
                 abi_reset_state();
+                
+                int64_t return_where = 0;
+                if (type_is_composite(callee_return_type))
+                {
+                    emit_pop_safe(RAX);
+                    return_slot_size = guess_stack_size_from_size(callee_return_type->size);
+                    emit_expand_stack_safe(return_slot_size);
+                    emit_push_safe(RAX);
+                    
+                    return_where = abi_get_next(0);
+                    
+                    if (-return_where > arg_stack_size)
+                        arg_stack_size = -return_where;
+                }
+                
                 GenericList * argwheres = 0;
                 while (arg)
                 {
@@ -2461,36 +2480,22 @@ void compile_code(Node * ast, int want_ptr)
                 while (arg_storage_size % 16)
                     arg_storage_size += 1;
                 
-                int64_t return_where = 0;
-                if (type_is_composite(callee_return_type))
-                {
-                    return_storage_size += guess_stack_size_from_size(callee_return_type->size);
-                    
-                    return_where = abi_get_next(0);
-                    
-                    if (-return_where > arg_stack_size)
-                        arg_stack_size = -return_where;
-                }
-                while (return_storage_size % 16)
-                    return_storage_size += 1;
-                
-                printf("stack size before %zd\n", arg_stack_size);
-                arg_stack_size += 8; // get pointer on right side of last arg, not left side
-                arg_stack_size -= 16; // remove rbp and return address from consideration (callee vs caller)
-                
                 // stack must be aligned to 16 bytes before call, with arguments on the "top" end (leftwards)
                 while ((arg_stack_size + stack_offset_at_funcptr) % 16)
                     arg_stack_size++;
                 
-                printf("stack size after %zd\n", arg_stack_size);
+                // stack expansion
                 
-                size_t total_stack_expansion = arg_stack_size + arg_storage_size + return_storage_size;
+                size_t total_stack_expansion = arg_stack_size + arg_storage_size;
                 emit_expand_stack_safe(total_stack_expansion);
                 
                 ptrdiff_t arg_storage_used = 0;
                 arg = funcdef->signature->next;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
-                size_t rsp_far_offset = 0;
+                
+                // arg evaluation
+                
+                size_t temp_used = 0;
                 while (arg)
                 {
                     assert(("too few args to function", arg_node));
@@ -2513,7 +2518,7 @@ void compile_code(Node * ast, int want_ptr)
                         size_t size = guess_stack_size_from_size(type->size);
                         
                         ////// this here
-                        emit_lea(RAX, RSP, arg_stack_size + arg_storage_used + rsp_far_offset);
+                        emit_lea(RAX, RSP, temp_used + arg_stack_size + arg_storage_used);
                         
                         if (arg_expr->kind == VAL_CONSTANT)
                             assert(("TODO store constant composite arg", 0));
@@ -2529,12 +2534,34 @@ void compile_code(Node * ast, int want_ptr)
                     else
                         _push_small_if_const(arg_expr);
                     
-                    rsp_far_offset += 8;
+                    temp_used += 8;
                     
                     arg = arg->next;
                     arg_node = arg_node->next_sibling;
                 }
+                
                 assert(("too many args to function", !arg_node));
+                
+                // arg movement
+                
+                if (type_is_composite(callee_return_type))
+                {
+                    size_t size = type_stack_size(callee_return_type);
+                    
+                    int64_t where = return_where;
+                    printf("!!19519 5   3#)!951910 return location %zX ----!!!513\n", return_where);
+                    if (where >= 0)
+                        emit_lea(where, RSP, temp_used + total_stack_expansion + 8);
+                    else
+                    {
+                        emit_lea(RAX, RSP, temp_used + total_stack_expansion + 8);
+                        where = -where;
+                        where -= 16; // remove rbp and return address from offset consideration
+                        where += temp_used;
+                        emit_mov_into_offset(RSP, where, RAX, 8);
+                        assert(where + 8 <= arg_stack_size);
+                    }
+                }
                 
                 arg = list_copy(funcdef->signature->next);
                 list_reverse(&arg);
@@ -2555,30 +2582,16 @@ void compile_code(Node * ast, int want_ptr)
                         emit_pop_safe(RAX);
                         where = -where;
                         where -= 16; // remove rbp and return address from offset consideration
+                        where += temp_used;
                         emit_mov_into_offset(RSP, where, RAX, 8);
                         assert(where + 8 <= arg_stack_size);
                     }
                     arg = arg->next;
+                    temp_used -= 8;
                 }
+                assert(temp_used == 0);
                 
-                if (type_is_composite(callee_return_type))
-                {
-                    emit_lea(RAX, RSP, arg_stack_size + arg_storage_size);
-                    emit_push_safe(RAX);
-                    
-                    int64_t where = return_where;
-                    printf("!!19519 5   3#)!951910 return location %zX ----!!!513", return_where);
-                    if (where >= 0)
-                        emit_pop_safe(where);
-                    else
-                    {
-                        emit_pop_safe(RAX);
-                        where = -where;
-                        where -= 16; // remove rbp and return address from offset consideration
-                        emit_mov_into_offset(RSP, where, RAX, 8);
-                        assert(where + 8 <= arg_stack_size);
-                    }
-                }
+                // call
                 
                 //#define DO_CALL_STACK_VERIFY_AT_RUNTIME
                 #ifdef DO_CALL_STACK_VERIFY_AT_RUNTIME
@@ -2598,13 +2611,10 @@ void compile_code(Node * ast, int want_ptr)
                 
                 if (type_is_composite(callee_return_type))
                 {
-                    size_t size = type_stack_size(callee_return_type);
-                    emit_expand_stack_safe(size);
-                    
                     emit_shrink_stack_safe(total_stack_expansion);
                     emit_dry_pop_safe(); // function address
                     
-                    emit_memcpy_static(RSP, RAX, callee_return_type->size, 1, 0);
+                    // return val already on stack
                 }
                 else
                 {
@@ -2622,7 +2632,9 @@ void compile_code(Node * ast, int want_ptr)
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
                 
-                //printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                //assert(stack_offset == stack_offset_at_funcptr);
+                
+                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
                 //printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
             } break;
             case ARRAYINDEX:
@@ -3083,23 +3095,17 @@ void compile_code(Node * ast, int want_ptr)
     {
         assert(("weird stack desync!!!", eval_stack_height == 0));
         puts("compiling statement.....");
-        ptrdiff_t offs = stack_offset;
+        assert(stack_offset == 0);
         compile_code(ast->first_child, 0);
-        printf("%zu %zu %zu\n", offs, stack_offset, eval_stack_height);
         
         // realign stack if statement produced a value (e.g. function calls)
         if (stack_peek())
         {
             puts("realigning stack...");
-            if (stack_offset == 8)
-                emit_dry_pop_safe();
+            emit_shrink_stack_safe(stack_offset);
             stack_pop();
         }
-        else if (offs > stack_offset)
-        {
-            assert(("horrible stack desync!!!!!", 0));
-        }
-        assert(("stack desync!", offs == stack_offset));
+        assert(("stack desync!", stack_offset == 0));
         assert(("weird stack desync!!!", eval_stack_height == 0));
     } break;
     case STATEMENTLIST:
@@ -3275,10 +3281,13 @@ void compile_code(Node * ast, int want_ptr)
                 assert(expr->kind == VAL_STACK_TOP);
                 
                 size_t size = guess_stack_size_from_size(expr->type->size);
-                printf("%zu, %zu\n", size + 8, stack_offset);
+                //printf("%zu, %zu\n", size + 8, stack_offset);
                 assert((ptrdiff_t)size + 8 == stack_offset);
                 
                 emit_mov_offset(RDI, RSP, size, 8);
+                
+                //emit_breakpoint();
+                
                 emit_memcpy_static(RDI, RSP, expr->type->size, 1, 0);
                 emit_shrink_stack_safe(size + 8);
             }
@@ -3397,6 +3406,11 @@ void compile_code(Node * ast, int want_ptr)
         if (types_same(expr_type, type))
         {
             // cast to same type, do nothing
+            stack_push(stackitem);
+        }
+        else if (type_is_pointer(expr_type) && type_is_pointer(type))
+        {
+            expr->type = type;
             stack_push(stackitem);
         }
         else if (type_is_int(expr_type) && type_is_int(type))
@@ -4112,10 +4126,25 @@ void compile_defs_compile(Node * ast)
         stack_loc = 0;
         local_vars = 0;
         
+        if (abi == ABI_WIN)
+            stack_loc += 16;
+        
         return_type = funcdef->signature->item;
         GenericList * arg = funcdef->signature->next;
         GenericList * arg_name = funcdef->arg_names;
         
+        if (type_is_composite(return_type))
+        {
+            Type * type = make_ptr_type(return_type);
+            size_t align = guess_alignment_from_size(type->size);
+            stack_loc += type->size;
+            while (stack_loc % align)
+                stack_loc++;
+            
+            Variable * var = add_local("___RETURN_POINTER_bzfkmje", type);
+            var->val->kind = VAL_STACK_BOTTOM;
+            var->val->loc = stack_loc;
+        }
         while (arg)
         {
             Type * type = arg->item;
@@ -4131,18 +4160,6 @@ void compile_defs_compile(Node * ast)
             arg_name = arg_name->next;
             arg = arg->next;
         }
-        if (type_is_composite(return_type))
-        {
-            Type * type = make_ptr_type(return_type);
-            size_t align = guess_alignment_from_size(type->size);
-            stack_loc += type->size;
-            while (stack_loc % align)
-                stack_loc++;
-            
-            Variable * var = add_local("___RETURN_POINTER_bzfkmje", type);
-            var->val->kind = VAL_STACK_BOTTOM;
-            var->val->loc = stack_loc;
-        }
         //printf("--!!-!-- input loc %d\n", stack_loc);
         
         emit_push(RBP);
@@ -4152,11 +4169,25 @@ void compile_defs_compile(Node * ast)
             emit_push(RDI);
             emit_push(RSI);
         }
-        emit_sub_imm32(RSP, stack_loc);
+        emit_sub_imm32(RSP, 0x7FFFFFFF);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
         // emit code to assign arguments into local stack slots
         abi_reset_state();
+        
+        if (type_is_composite(return_type))
+        {
+            Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
+            int64_t where = abi_get_next(0);
+            if (where > 0)
+                emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
+            else
+            {
+                emit_mov_offset(RAX, RBP, -where, var->val->type->size);
+                emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+            }
+        }
+        
         arg = funcdef->signature->next;
         arg_name = funcdef->arg_names;
         while (arg)
@@ -4201,18 +4232,6 @@ void compile_defs_compile(Node * ast)
             
             arg_name = arg_name->next;
             arg = arg->next;
-        }
-        if (type_is_composite(return_type))
-        {
-            Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
-            int64_t where = abi_get_next(0);
-            if (where > 0)
-                emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
-            else
-            {
-                emit_mov_offset(RAX, RBP, -where, var->val->type->size);
-                emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
-            }
         }
         
         Node * statement = nth_child(ast, 4)->first_child;
@@ -4449,7 +4468,7 @@ void compile(Node * ast)
             emit_push(RDI);
             emit_push(RSI);
         }
-        emit_sub_imm32(RSP, stack_loc);
+        emit_sub_imm32(RSP, 0x7FFFFFFF);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
         next = ast->first_child;

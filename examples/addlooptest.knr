@@ -1,27 +1,32 @@
 
-struct Vec {
+struct Vector3 {
     f64 x;
     f64 y;
     f64 z;
-    f64 w;
-    f64 q;
 }
 
-Vec vec_add_vec(Vec a)
+Vector3 vec3_add_vec3(Vector3 a, Vector3 b)
 {
+    a.x = a.x + b.x;
+    //a.y = a.y + b.y;
+    //a.z = a.z + b.z;
     return a;
 }
-
 void main()
 {
-    Vec a = Vec { 1.01f64, 0.401f64, 0.156f64, 10.15f64, 3.14159f64 };
+    Vector3 a = Vector3 { 1.01f64, 0.501f64, 0.0141f64 };
+    Vector3 b = Vector3 { 0.151f64, 0.155f64, 2.0141f64 };
     
-    a = vec_add_vec(a);
-    
+    //u64 i = 100u64;
+    //head:
+    //if (i)
+    //{
+        a = vec3_add_vec3(a, b);
+    //    i = i - 1u64;
+    //    goto head;
+    //}
     print_float(a.x);
-    print_float(a.y);
-    print_float(a.z);
-    print_float(a.w);
-    print_float(a.q);
+    //print_float(a.y);
+    //print_float(a.z);
     return;
 }

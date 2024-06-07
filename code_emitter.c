@@ -438,6 +438,10 @@ void emit_ret(void)
     emitter_log_flush();
 }
 
+
+
+void _impl_emit_push_val(int64_t val);
+
 void _impl_emit_sub_imm(int reg, int64_t val)
 {
     last_is_terminator = 0;
@@ -446,6 +450,23 @@ void _impl_emit_sub_imm(int reg, int64_t val)
     
     if (val == 0) // NOP
         return;
+    
+    
+//#define EVIL_RSP_DEBUG
+#ifdef EVIL_RSP_DEBUG
+    if (reg == RSP && !(val % 8))
+    {
+        //uint64_t base = 0x2222222233333333;
+        uint64_t base = 0x00111111;
+        uint64_t n = base;
+        for (size_t i = 0; i < (uint64_t)val; i += 8)
+        {
+            _impl_emit_push_val(n);
+            n += base;
+        }
+        return;
+    }
+#endif
     
     assert(("negative or 64-bit immediate subtraction not yet supported", (val > 0 && val <= 2147483647)));
     byte_push(code, 0x48);

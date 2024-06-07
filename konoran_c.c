@@ -15,13 +15,13 @@
 #include "compiler.c"
 #include "jitify.c"
 
-__attribute__((noinline))
+//__attribute__((noinline))
 void print_float(double x)
 {
     printf("%f\n", x);
 }
 
-__attribute__((noinline))
+//__attribute__((noinline))
 void print_bytes(uint8_t * bytes, uint64_t count)
 {
     while (count > 0)
@@ -33,77 +33,10 @@ void print_bytes(uint8_t * bytes, uint64_t count)
     puts("");
 }
 
-__attribute__((noinline))
+//__attribute__((noinline))
 void print_fmt(char * cstring_bytes, char ** vars)
 {
     puts("TODO: implement print_fmt");
-    /*
-    unsafe
-    {
-        let mut strlen = 0;
-        while *cstring_bytes.add(strlen) != 0
-        {
-            strlen += 1;
-        }
-        let orig_string = String::from_utf8_lossy(std::slice::from_raw_parts(cstring_bytes, strlen));
-        
-        let mut s = "".to_string();
-        
-        let mut state = ' '; // ' ' - normal, '%' - in format specifier
-        for c in orig_string.chars()
-        {
-            match state
-            {
-                ' ' =>
-                    match c
-                    {
-                        '%' => state = '%',
-                        _ => s.push(c),
-                    }
-                '%' =>
-                {
-                    state = ' ';
-                    if !(*vars).is_null()
-                    {
-                        match c
-                        {
-                            'X' => s.push_str(&format!("{:X}", *((*vars) as *mut u64))),
-                            'x' => s.push_str(&format!("{:x}", *((*vars) as *mut u64))),
-                            'u' => s.push_str(&format!("{}", *((*vars) as *mut u64))),
-                            'i' => s.push_str(&format!("{}", *((*vars) as *mut i64))),
-                            'F' => s.push_str(&format!("{}", *((*vars) as *mut f64))),
-                            'f' => s.push_str(&format!("{}", *((*vars) as *mut f32))),
-                            's' =>
-                            {
-                                let mut strlen = 0;
-                                let cstring_bytes = *vars;
-                                while *cstring_bytes.add(strlen) != 0
-                                {
-                                    strlen += 1;
-                                }
-                                let orig_string = String::from_utf8_lossy(std::slice::from_raw_parts(cstring_bytes, strlen));
-                                s.push_str(&orig_string);
-                            }
-                            'c' =>
-                                if let Some(c) = char::from_u32(*((*vars) as *mut u32))
-                                {
-                                    s.push(c);
-                                }
-                            _ =>
-                            {
-                                s.push('%');
-                                s.push(c);
-                            }
-                        }
-                        vars = vars.offset(1);
-                    }
-                }
-                _ => panic!(),
-            }
-        }
-        print!("{}", s);
-    }
-    */
 }
 
 int main(int argc, char ** argv)
@@ -216,6 +149,7 @@ int main(int argc, char ** argv)
     //asdf = jit_main(0);
     assert(jit_main);
     //jit_main();
+    
     jit_main(argc - 1, argv + 1);
     
     puts("---- program has been run");
