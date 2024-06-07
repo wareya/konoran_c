@@ -7,6 +7,7 @@
 __attribute__((noreturn))
 void crash(void)
 {
+    //assert(0);
     __asm__("int3");
     while(1);
 }
@@ -1122,6 +1123,12 @@ void emit_push_safe(int reg1)
     emit_push(reg1);
     stack_offset += 8;
 }
+void emit_push_safe_discard(int reg1)
+{
+    //puts("emitting base reg push...");
+    emit_push_discard(reg1);
+    stack_offset += 8;
+}
 void emit_pop_safe(int reg1)
 {
     assert(stack_offset >= 8);
@@ -1147,6 +1154,12 @@ void emit_xmm_push_safe(int reg1, int size)
 {
     //puts("emitting XMM push...");
     emit_xmm_push(reg1, size);
+    stack_offset += 8;
+}
+void emit_xmm_push_safe_discard(int reg1, int size)
+{
+    //puts("emitting XMM push...");
+    emit_xmm_push_discard(reg1, size);
     stack_offset += 8;
 }
 void emit_xmm_pop_safe(int reg1, int size)
@@ -1220,7 +1233,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_add(RAX, RDX, 8);
             else if (op == '&')
                 emit_and(RAX, RDX, 8);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
             
             stack_push_new_top(left->val->type);
             return;
@@ -1449,37 +1462,37 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         if (op == '+')
         {
             emit_add(RAX, RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '-')
         {
             emit_sub(RAX, RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '*' && int_signed)
         {
             emit_imul(RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '*')
         {
             emit_mul(RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '&')
         {
             emit_and(RAX, RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '|')
         {
             emit_or(RAX, RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '^')
         {
             emit_xor(RAX, RDX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == 'd' || op == 'r' || op == '/' || op == '%')
         {
@@ -1499,9 +1512,9 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_div(RDI, size);
             
             if (is_div)
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
             else
-                emit_push_safe(RDX);
+                emit_push_safe_discard(RDX);
             
             if (op == '/' || op == '%')
             {
@@ -1509,7 +1522,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 
                 emit_label(0, label_anon_num);
                 // paired with the above emit_push_safe calls
-                emit_push(RDI);
+                emit_push_discard(RDI);
                 
                 emit_label(0, label_anon_num + 1);
                 label_anon_num += 2;
@@ -1524,7 +1537,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_shr(RAX, size);
             else
                 emit_shl(RAX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == '<' || op == '>')
         {
@@ -1539,7 +1552,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_shr(RAX, size);
             else
                 emit_shl(RAX, size);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
         }
         else if (op == 'a' || op == 'o')
         {
@@ -1551,7 +1564,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
                 emit_and(RAX, RDX, 1);
             else
                 emit_or(RAX, RDX, 1);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
             
             left->val->type = get_type("u8");
         }
@@ -1568,22 +1581,22 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         if (op == '+')
         {
             emit_float_add(XMM0, XMM1, size);
-            emit_xmm_push_safe(XMM0, size);
+            emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '-')
         {
             emit_float_sub(XMM0, XMM1, size);
-            emit_xmm_push_safe(XMM0, size);
+            emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '*')
         {
             emit_float_mul(XMM0, XMM1, size);
-            emit_xmm_push_safe(XMM0, size);
+            emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '/')
         {
             emit_float_div(XMM0, XMM1, size);
-            emit_xmm_push_safe(XMM0, size);
+            emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '%')
         {
@@ -1838,7 +1851,7 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
                 assert(("other ops not implemented yet!", 0));
         }
         
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
     }
     else if (type_is_float(left->val->type))
     {
@@ -1886,7 +1899,7 @@ void compile_infix_equality(StackItem * left, StackItem * right, char op)
         else
             assert(("internal error: broken float comparison op", 0));
         
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
     }
     
     stack_push_new_top(get_type("u8"));
@@ -1916,10 +1929,10 @@ void compile_unary_addrof(Node * ast)
         
         size_t size = guess_stack_size_from_size(type->size);
         emit_lea(RAX, RBP, -stack_loc);
-        emit_memcpy_static(RAX, RSP, type->size, 1, 0);
+        emit_memcpy_static_aligned_to_8_discard(RAX, RSP, type->size, 1, 0);
         emit_shrink_stack_safe(size);
         
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
         stack_push_new_top(make_ptr_type(type));
     }
     else
@@ -1972,25 +1985,25 @@ void compile_unary_minus(StackItem * val)
     {
         emit_pop_safe(RAX);
         emit_neg(RAX, val->val->type->size);
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
     }
     else if (val->val->type->primitive_type == PRIM_F32)
     {
         emit_xmm_pop_safe(XMM0, 4);
         emit_xor(RAX, RAX, 4);
         emit_bts(RAX, 31);
-        emit_mov_xmm_from_base(XMM1, RAX, 4);
+        emit_mov_xmm_from_base_discard(XMM1, RAX, 4);
         emit_xorps(XMM0, XMM1);
-        emit_xmm_push_safe(XMM0, 4);
+        emit_xmm_push_safe_discard(XMM0, 4);
     }
     else // PRIM_F64
     {
         emit_xmm_pop_safe(XMM0, 8);
         emit_xor(RAX, RAX, 4);
         emit_bts(RAX, 63);
-        emit_mov_xmm_from_base(XMM1, RAX, 8);
+        emit_mov_xmm_from_base_discard(XMM1, RAX, 8);
         emit_xorps(XMM0, XMM1);
-        emit_xmm_push_safe(XMM0, 8);
+        emit_xmm_push_safe_discard(XMM0, 8);
     }
     stack_push(val);
 }
@@ -2014,6 +2027,7 @@ void compile_unary_not(StackItem * val)
                 val->val->_val = !(uint64_t)val->val->_val;
         }
         
+        val->val->type = get_type("u8");
         stack_push(val);
         return;
     }
@@ -2025,7 +2039,7 @@ void compile_unary_not(StackItem * val)
         emit_pop_safe(RAX);
         emit_test(RAX, RAX, val->val->type->size);
         emit_cset(RAX, J_EQ);
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
         
         val->val->type = get_type("u8");
         stack_push(val);
@@ -2037,8 +2051,9 @@ void compile_unary_not(StackItem * val)
         emit_pop_safe(RAX);
         emit_test(RAX, RAX, val->val->type->size);
         emit_cset(RAX, J_EQ);
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
         
+        val->val->type = get_type("u8");
         stack_push(val);
     }
     else
@@ -2064,7 +2079,7 @@ void compile_unary_bitnot(StackItem * val)
         
         emit_pop_safe(RAX);
         emit_not(RAX, val->val->type->size);
-        emit_push_safe(RAX);
+        emit_push_safe_discard(RAX);
         
         stack_push(val);
     }
@@ -2107,8 +2122,9 @@ void compile_code(Node * ast, int want_ptr)
                     assert(var->val->kind == VAL_STACK_BOTTOM);
                 }
                 printf("returning into pointer found at RBP minus %zd....\n", var->val->loc);
-                emit_mov_offset(RDI, RBP, -var->val->loc, 8);
-                emit_mov(RAX, RDI, 8); // also return pointer in RAX
+                
+                emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                
                 if (val->kind == VAL_CONSTANT)
                 {
                     assert(("TODO: const composite returns", 0));
@@ -2116,7 +2132,7 @@ void compile_code(Node * ast, int want_ptr)
                 else if (val->kind == VAL_STACK_TOP)
                 {
                     size_t size = guess_stack_size_from_size(val->type->size);
-                    emit_memcpy_static(RDI, RSP, val->type->size, 1, 0);
+                    emit_memcpy_static_aligned_to_8_discard(RAX, RSP, val->type->size, 1, 0);
                     emit_shrink_stack_safe(size);
                 }
                 else
@@ -2142,6 +2158,7 @@ void compile_code(Node * ast, int want_ptr)
             emit_pop(RSI);
             emit_pop(RDI);
         }
+        
         emit_leave();
         emit_ret();
     } break;
@@ -2183,7 +2200,7 @@ void compile_code(Node * ast, int want_ptr)
                 assert(argval->kind == VAL_STACK_TOP);
                 emit_xmm_pop_safe(XMM0, 8);
                 emit_float_sqrt(XMM0, XMM0, 8);
-                emit_xmm_push_safe(XMM0, 8);
+                emit_xmm_push_safe_discard(XMM0, 8);
                 stack_push(item);
             }
         }
@@ -2209,7 +2226,7 @@ void compile_code(Node * ast, int want_ptr)
                 assert(argval->kind == VAL_STACK_TOP);
                 emit_xmm_pop_safe(XMM0, 4);
                 emit_float_sqrt(XMM0, XMM0, 4);
-                emit_xmm_push_safe(XMM0, 4);
+                emit_xmm_push_safe_discard(XMM0, 4);
                 stack_push(item);
             }
         }
@@ -2282,7 +2299,7 @@ void compile_code(Node * ast, int want_ptr)
                     emit_mov_imm(RAX, var->val->loc, 8);
                     log_static_relocation(emitter_get_code_len() - 8, var->val->loc);
                     
-                    emit_push_safe(RAX);
+                    emit_push_safe_discard(RAX);
                     Value * value = new_value(make_ptr_type(var->val->type));
                     value->kind = VAL_STACK_TOP;
                     stack_push_new(value);
@@ -2293,7 +2310,7 @@ void compile_code(Node * ast, int want_ptr)
                 type = make_ptr_type(type);
                 emit_lea(RAX, RBP, -var->val->loc);
                 
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
@@ -2304,14 +2321,14 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     //printf("emitting mov with offset of %zd...\n", -var->val->loc);
                     emit_mov_offset(RAX, RBP, -var->val->loc, type->size);
-                    emit_push_safe(RAX);
+                    emit_push_safe_discard(RAX);
                 }
                 else
                 {
                     size_t size = guess_stack_size_from_size(type->size);
                     emit_expand_stack_safe(size);
                     emit_lea(RSI, RBP, -var->val->loc);
-                    emit_memcpy_static(RSP, RSI, type->size, 1, 0);
+                    emit_memcpy_static_aligned_to_8(RSP, RSI, type->size, 1, 0);
                 }
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -2332,8 +2349,8 @@ void compile_code(Node * ast, int want_ptr)
             
             if (want_ptr == 0)
             {
-                emit_mov_reg_preg(RAX, RAX, var->val->type->size);
-                emit_push_safe(RAX);
+                emit_mov_reg_preg_discard(RDX, RAX, var->val->type->size);
+                emit_push_safe_discard(RDX);
                 
                 Value * value = new_value(var->val->type);
                 value->kind = VAL_STACK_TOP;
@@ -2341,7 +2358,7 @@ void compile_code(Node * ast, int want_ptr)
             }
             else
             {
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 Value * value = new_value(make_ptr_type(var->val->type));
                 value->kind = VAL_STACK_TOP;
                 stack_push_new(value);
@@ -2355,7 +2372,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 emit_lea_rip_offset(RAX, 0);
                 log_symbol_relocation(emitter_get_code_len() - 4, name_text);
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
             }
             
             Type * type = make_funcptr_type(funcdef);
@@ -2383,7 +2400,7 @@ void compile_code(Node * ast, int want_ptr)
             if (var->val->kind == VAL_STACK_BOTTOM)
             {
                 emit_lea(RAX, RBP, -var->val->loc);
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 stack_push_new(var->val);
             }
             else
@@ -2395,7 +2412,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 emit_mov_imm64(RAX, var->val->loc);
                 log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 
                 Value * value = new_value(var->val->type);
                 //value->kind = VAL_ANYWHERE;
@@ -2453,7 +2470,7 @@ void compile_code(Node * ast, int want_ptr)
                     emit_pop_safe(RAX);
                     return_slot_size = guess_stack_size_from_size(callee_return_type->size);
                     emit_expand_stack_safe(return_slot_size);
-                    emit_push_safe(RAX);
+                    emit_push_safe_discard(RAX);
                     
                     return_where = abi_get_next(0);
                     
@@ -2524,12 +2541,12 @@ void compile_code(Node * ast, int want_ptr)
                             assert(("TODO store constant composite arg", 0));
                         else
                         {
-                            emit_memcpy_static(RAX, RSP, type->size, 1, 0);
+                            emit_memcpy_static_aligned_to_8_discard(RAX, RSP, type->size, 1, 0);
                             emit_shrink_stack_safe(size);
                         }
                         arg_storage_used += size;
                         assert(arg_storage_used <= arg_storage_size);
-                        emit_push_safe(RAX);
+                        emit_push_safe_discard(RAX);
                     }
                     else
                         _push_small_if_const(arg_expr);
@@ -2558,7 +2575,7 @@ void compile_code(Node * ast, int want_ptr)
                         where = -where;
                         where -= 16; // remove rbp and return address from offset consideration
                         where += temp_used;
-                        emit_mov_into_offset(RSP, where, RAX, 8);
+                        emit_mov_into_offset_discard(RSP, RAX, where, 8);
                         assert(where + 8 <= arg_stack_size);
                     }
                 }
@@ -2583,7 +2600,7 @@ void compile_code(Node * ast, int want_ptr)
                         where = -where;
                         where -= 16; // remove rbp and return address from offset consideration
                         where += temp_used;
-                        emit_mov_into_offset(RSP, where, RAX, 8);
+                        emit_mov_into_offset_discard(RSP, RAX, where, 8);
                         assert(where + 8 <= arg_stack_size);
                     }
                     arg = arg->next;
@@ -2623,9 +2640,9 @@ void compile_code(Node * ast, int want_ptr)
                     
                     // push return val
                     if (type_is_float(callee_return_type))
-                        emit_xmm_push_safe(XMM0, 8);
+                        emit_xmm_push_safe_discard(XMM0, 8);
                     else if (!type_is_void(callee_return_type))
-                        emit_push_safe(RAX);
+                        emit_push_safe_discard(RAX);
                 }
                 // push return val type
                 Value * value = new_value(callee_return_type);
@@ -2692,7 +2709,7 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     emit_pop_safe(RDX);
                     emit_add(RDX, RAX, 8);
-                    emit_push_safe(RDX);
+                    emit_push_safe_discard(RDX);
                     
                     stack_push_new_anywhere(make_ptr_type(inner_type));
                 }
@@ -2703,9 +2720,9 @@ void compile_code(Node * ast, int want_ptr)
                     if (is_on_stack)
                     {
                         emit_add(RAX, RSP, 8);
-                        emit_mov_reg_preg(RAX, RAX, inner_type->size);
+                        emit_mov_reg_preg_discard(RDX, RAX, inner_type->size);
                         emit_shrink_stack_safe(array_size_stack);
-                        emit_push_safe(RAX);
+                        emit_push_safe_discard(RDX);
                         
                         stack_push_new_top(inner_type);
                     }
@@ -2713,8 +2730,8 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         emit_pop_safe(RDX);
                         emit_add(RDX, RAX, 8);
-                        emit_mov_reg_preg(RAX, RDX, inner_type->size);
-                        emit_push_safe(RAX);
+                        emit_mov_reg_preg_discard(RAX, RDX, inner_type->size);
+                        emit_push_safe_discard(RAX);
                         
                         stack_push_new_top(inner_type);
                     }
@@ -2734,7 +2751,8 @@ void compile_code(Node * ast, int want_ptr)
                         uint64_t target_offset = struct_size_stack - inner_size_stack;
                         
                         emit_lea(RDI, RSP, target_offset);
-                        emit_memcpy_static(RDI, RAX, inner_type->size, 1, 0);
+                        // FIXME this is wrong!
+                        emit_memcpy_static_aligned_to_8_discard(RDI, RAX, inner_type->size, 1, 0);
                         
                         emit_shrink_stack_safe(target_offset);
                         
@@ -2747,7 +2765,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_add(RSI, RAX, 8);
                         emit_expand_stack_safe(inner_size_stack);
                         
-                        emit_memcpy_static(RSP, RSI, inner_type->size, 1, 0);
+                        emit_memcpy_static_aligned_to_8(RSP, RSI, inner_type->size, 1, 0);
                         
                         stack_push_new_top(inner_type);
                     }
@@ -2815,7 +2833,7 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         emit_pop_safe(RAX);
                         emit_add_imm(RAX, prop_offset);
-                        emit_push_safe(RAX);
+                        emit_push_safe_discard(RAX);
                     }
                     
                     stack_push_new_anywhere(make_ptr_type(prop_type));
@@ -2828,15 +2846,15 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         emit_mov_offset(RAX, RSP, prop_offset, prop_type->size);
                         emit_shrink_stack_safe(struct_size_stack);
-                        emit_push_safe(RAX);
+                        emit_push_safe_discard(RAX);
                         
                         stack_push_new_top(prop_type);
                     }
                     else if (want_ptr == 0)
                     {
                         emit_pop_safe(RDX);
-                        emit_mov_offset(RAX, RDX, prop_offset, prop_type->size);
-                        emit_push_safe(RAX);
+                        emit_mov_offset_discard(RAX, RDX, prop_offset, prop_type->size);
+                        emit_push_safe_discard(RAX);
                         
                         stack_push_new_top(prop_type);
                     }
@@ -2865,7 +2883,7 @@ void compile_code(Node * ast, int want_ptr)
                         {
                             emit_lea(RSI, RSP, prop_offset);
                             emit_lea(RDI, RSP, target_offset);
-                            emit_memcpy_static(RDI, RSI, prop_type->size, 1, 0);
+                            emit_memcpy_static_aligned_to_8_discard(RDI, RSI, prop_type->size, 1, 0);
                             emit_shrink_stack_safe(target_offset);
                             stack_push_new_top(prop_type);
                         }
@@ -2882,7 +2900,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_add_imm(RSI, prop_offset);
                         
                         emit_expand_stack_safe(prop_size_stack);
-                        emit_memcpy_static(RSP, RSI, prop_type->size, 1, 0);
+                        emit_memcpy_static_aligned_to_8(RSP, RSI, prop_type->size, 1, 0);
                         
                         stack_push_new_top(prop_type);
                     }
@@ -2926,7 +2944,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 emit_pop_safe(RAX);
                 emit_expand_stack_safe(stack_size - inner_size);
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 
                 //emit_mov_imm(RAX, first->_val, inner_size);
                 //emit_mov_preg_reg(RSP, RAX, inner_size);
@@ -2947,7 +2965,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 assert(!first->mem && !first->loc); // FIXME wrong
                 emit_mov_imm(RAX, first->_val, inner_size);
-                emit_mov_preg_reg(RSP, RAX, inner_size);
+                emit_mov_preg_reg_discard(RSP, RAX, inner_size);
             }
             else
             {
@@ -2958,7 +2976,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_imm64(RSI, loc);
                 log_static_relocation(emitter_get_code_len() - 8, loc);
                 
-                emit_memcpy_static(RSP, RSI, array_type->inner_type->size, 1, 0);
+                emit_memcpy_static_aligned_to_8(RSP, RSI, array_type->inner_type->size, 1, 0);
             }
         }
         
@@ -2976,7 +2994,7 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     assert(!next->mem && !next->loc); // FIXME wrong
                     emit_mov_imm(RAX, next->_val, inner_size);
-                    emit_mov_into_offset(RSP, offset, RAX, inner_size);
+                    emit_mov_into_offset_discard(RSP, RAX, offset, inner_size);
                 }
                 else
                 {
@@ -2989,7 +3007,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     emit_lea(RDI, RSP, inner_size * i);
                     
-                    emit_memcpy_static(RDI, RSI, array_type->inner_type->size, 1, 0);
+                    emit_memcpy_static_aligned_to_8(RDI, RSI, array_type->inner_type->size, 1, 0);
                 }
             }
             else
@@ -3194,7 +3212,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 _push_small_if_const(expr);
                 emit_pop_safe(RAX);
-                emit_mov_into_offset(RBP, -var->val->loc, RAX, expr->type->size);
+                emit_mov_into_offset_discard(RBP, RAX, -var->val->loc, expr->type->size);
             }
             else if (expr->kind == VAL_CONSTANT)
             {
@@ -3212,14 +3230,14 @@ void compile_code(Node * ast, int want_ptr)
                 
                 emit_lea(RDI, RBP, -var->val->loc);
                 
-                emit_memcpy_static(RDI, RSI, expr->type->size, 1, 0);
+                emit_memcpy_static_aligned_to_8(RDI, RSI, expr->type->size, 1, 0);
             }
             else
             {
                 assert(expr->kind == VAL_STACK_TOP);
                 size_t size = guess_stack_size_from_size(expr->type->size);
                 emit_lea(RDI, RBP, -var->val->loc);
-                emit_memcpy_static(RDI, RSP, expr->type->size, 1, 0);
+                emit_memcpy_static_aligned_to_8_discard(RDI, RSP, expr->type->size, 1, 0);
                 emit_shrink_stack_safe(size);
                 //assert(("TODO/FIXME: non-const aggregate fulldeclaration", 0));
             }
@@ -3274,7 +3292,7 @@ void compile_code(Node * ast, int want_ptr)
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
-                emit_memcpy_static(RDI, RSI, expr->type->size, 1, 0);
+                emit_memcpy_static_aligned_to_8(RDI, RSI, expr->type->size, 1, 0);
             }
             else
             {
@@ -3284,11 +3302,11 @@ void compile_code(Node * ast, int want_ptr)
                 //printf("%zu, %zu\n", size + 8, stack_offset);
                 assert((ptrdiff_t)size + 8 == stack_offset);
                 
-                emit_mov_offset(RDI, RSP, size, 8);
+                emit_mov_offset(RDX, RSP, size, 8);
                 
                 //emit_breakpoint();
                 
-                emit_memcpy_static(RDI, RSP, expr->type->size, 1, 0);
+                emit_memcpy_static_aligned_to_8_discard(RDX, RSP, expr->type->size, 1, 0);
                 emit_shrink_stack_safe(size + 8);
             }
         }
@@ -3299,7 +3317,7 @@ void compile_code(Node * ast, int want_ptr)
             
             emit_pop_safe(RAX); // destination location into RAX
             
-            emit_mov_preg_reg(RAX, RDX, expr->type->size);
+            emit_mov_preg_reg_discard(RAX, RDX, expr->type->size);
         }
     } break;
     case SIZEOF:
@@ -3437,7 +3455,7 @@ void compile_code(Node * ast, int want_ptr)
                     emit_sign_extend(RAX, type->size, expr_type->size);
                 else
                     emit_zero_extend(RAX, type->size, expr_type->size);
-                emit_push_safe(RAX); // value into RAX
+                emit_push_safe_discard(RAX); // value into RAX
                 
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -3484,14 +3502,14 @@ void compile_code(Node * ast, int want_ptr)
                 
                 // if >= maximum
                 emit_mov_imm(RAX, maxf[slot], expr_type->size);
-                emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                emit_mov_xmm_from_base_discard(XMM1, RAX, expr_type->size);
                 emit_compare_float(XMM0, XMM1, expr_type->size);
                 emit_mov_imm(RAX, i_maxi[slot], type->size);
                 emit_jmp_cond_short(0, label_anon_num, J_UGE);
                 
                 // if <= minimum or NaN
                 emit_mov_imm(RAX, minf[slot], expr_type->size);
-                emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                emit_mov_xmm_from_base_discard(XMM1, RAX, expr_type->size);
                 emit_compare_float(XMM1, XMM0, expr_type->size);
                 emit_mov_imm(RAX, i_mini[slot], type->size);
                 emit_jmp_cond_short(0, label_anon_num, J_ULE); // branch taken if NaN
@@ -3499,7 +3517,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
                 
                 emit_label(0, label_anon_num);
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 label_anon_num += 1;
             }
             else
@@ -3508,7 +3526,7 @@ void compile_code(Node * ast, int want_ptr)
                 
                 // if >= maximum
                 emit_mov_imm(RAX, maxf[slot], expr_type->size);
-                emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                emit_mov_xmm_from_base_discard(XMM1, RAX, expr_type->size);
                 emit_compare_float(XMM0, XMM1, expr_type->size);
                 emit_mov_imm(RAX, u_maxi[slot], type->size);
                 emit_jmp_cond_short(0, label_anon_num, J_UGE);
@@ -3528,14 +3546,14 @@ void compile_code(Node * ast, int want_ptr)
                     else
                         emit_mov_imm(RAX, 0x43E0000000000000, 8);
                     
-                    emit_mov_xmm_from_base(XMM1, RAX, expr_type->size);
+                    emit_mov_xmm_from_base_discard(XMM1, RAX, expr_type->size);
                     emit_compare_float(XMM0, XMM1, expr_type->size);
                     
                     emit_jmp_cond_short(0, label_anon_num + 1, J_ULT); // taken if NaN, skipping manual conversion
                     
                     // manually cast using bit trickery
                     // chop off high bits
-                    emit_mov_base_from_xmm(RAX, XMM0, type->size);
+                    emit_mov_base_from_xmm_discard(RAX, XMM0, type->size);
                     emit_shl_imm(RAX, (expr_type->size == 4) ? 40 : 11, 8);
                     // add implicit leading 1
                     emit_bts(RAX, 63);
@@ -3547,7 +3565,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_cast_float_to_int(RAX, XMM0, cast_size, expr_type->size);
                 
                 emit_label(0, label_anon_num);
-                emit_push_safe(RAX);
+                emit_push_safe_discard(RAX);
                 label_anon_num += 2;
             }
             
@@ -3564,7 +3582,7 @@ void compile_code(Node * ast, int want_ptr)
             
             emit_xmm_pop_safe(XMM0, expr_type->size);
             emit_cast_float_to_float(XMM0, XMM0, type->size, expr_type->size);
-            emit_xmm_push_safe(XMM0, type->size);
+            emit_xmm_push_safe_discard(XMM0, type->size);
             
             Value * value = new_value(type);
             value->kind = VAL_STACK_TOP;
@@ -3634,7 +3652,7 @@ void compile_code(Node * ast, int want_ptr)
             emit_cast_int_to_float(XMM0, RAX, type->size, real_size);
             
             // matched with emit_push above
-            emit_xmm_push_safe(XMM0, type->size);
+            emit_xmm_push_safe_discard(XMM0, type->size);
             
             emit_label(0, label_anon_num);
             label_anon_num += 2;
@@ -3847,7 +3865,7 @@ void compile_code(Node * ast, int want_ptr)
             
             emit_mov_imm64(RAX, loc);
             log_static_relocation(emitter_get_code_len() - 8, loc);
-            emit_push_safe(RAX);
+            emit_push_safe_discard(RAX);
             
             Value * val = new_value(make_ptr_type(get_type("u8")));
             val->kind = VAL_STACK_TOP;
@@ -3928,11 +3946,11 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     if (val->val->kind == VAL_STACK_TOP)
                     {
-                        if (new_type->size <= 8)
+                        if (!type_is_composite(new_type))
                         {
                             emit_pop_safe(RDX);
-                            emit_mov_reg_preg(RAX, RDX, new_type->size);
-                            emit_push_safe(RAX);
+                            emit_mov_reg_preg_discard(RAX, RDX, new_type->size);
+                            emit_push_safe_discard(RAX);
                         }
                         else
                         {
@@ -3941,7 +3959,7 @@ void compile_code(Node * ast, int want_ptr)
                             // destination location
                             size_t aligned_size = type_stack_size(new_type);
                             emit_expand_stack_safe(aligned_size);
-                            emit_memcpy_static(RSP, RSI, new_type->size, 1, 0);
+                            emit_memcpy_static_aligned_to_8_discard(RSP, RSI, new_type->size, 1, 0);
                         }
                         Value * value = new_value(new_type);
                         value->kind = VAL_STACK_TOP;
@@ -4126,8 +4144,12 @@ void compile_defs_compile(Node * ast)
         stack_loc = 0;
         local_vars = 0;
         
+        // need to push rdi, rsi (non-clobbered)
         if (abi == ABI_WIN)
             stack_loc += 16;
+        // need to push rdi, rsi, rcx (args)
+        else if (abi == ABI_SYSV)
+            stack_loc += 32;
         
         return_type = funcdef->signature->item;
         GenericList * arg = funcdef->signature->next;
@@ -4164,11 +4186,22 @@ void compile_defs_compile(Node * ast)
         
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
+        
+        // non-clobbered
         if (abi == ABI_WIN)
         {
             emit_push(RDI);
             emit_push(RSI);
         }
+        // need to push rdi, rsi, rcx (args). needs to be an even number of pushes, so might as well push RDX while we're at it.
+        else if (abi == ABI_SYSV)
+        {
+            emit_push(RDI);
+            emit_push(RSI);
+            emit_push(RCX);
+            emit_push(RDX);
+        }
+        
         emit_sub_imm32(RSP, 0x7FFFFFFF);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
@@ -4180,11 +4213,11 @@ void compile_defs_compile(Node * ast)
             Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
             int64_t where = abi_get_next(0);
             if (where > 0)
-                emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
+                emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
             else
             {
                 emit_mov_offset(RAX, RBP, -where, var->val->type->size);
-                emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+                emit_mov_into_offset_discard(RBP, RAX, -var->val->loc, var->val->type->size);
             }
         }
         
@@ -4202,17 +4235,30 @@ void compile_defs_compile(Node * ast)
                 if (where <= R15)
                 {
                     if (!type_is_composite(var->val->type))
-                        emit_mov_into_offset(RBP, -var->val->loc, where, var->val->type->size);
+                        emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
                     else
                     {
                         emit_lea(RDI, RBP, -var->val->loc);
-                        emit_memcpy_static(RDI, where, var->val->type->size, 1, 0);
+                        if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
+                        {
+                            int b = -1;
+                            if (where == RDI)
+                                emit_mov_offset(RSI, RBP, (b++)*8, 8);
+                            else if (where == RSI)
+                                emit_mov_offset(RSI, RBP, (b++)*8, 8);
+                            else if (where == RCX)
+                                emit_mov_offset(RSI, RBP, (b++)*8, 8);
+                            
+                            emit_memcpy_static_aligned_to_8_discard(RDI, RSI, var->val->type->size, 1, 0);
+                        }
+                        else
+                            emit_memcpy_static_aligned_to_8_discard(RDI, where, var->val->type->size, 1, 0);
                     }
                 }
                 else
                 {
-                    emit_mov_base_from_xmm(RAX, where, 8);
-                    emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+                    emit_mov_base_from_xmm_discard(RAX, where, 8);
+                    emit_mov_into_offset_discard(RBP, RAX, -var->val->loc, var->val->type->size);
                 }
             }
             else
@@ -4220,13 +4266,13 @@ void compile_defs_compile(Node * ast)
                 if (!type_is_composite(var->val->type))
                 {
                     emit_mov_offset(RAX, RBP, -where, var->val->type->size);
-                    emit_mov_into_offset(RBP, -var->val->loc, RAX, var->val->type->size);
+                    emit_mov_into_offset_discard(RBP, RAX, -var->val->loc, var->val->type->size);
                 }
                 else
                 {
                     emit_mov_offset(RSI, RBP, -where, 8);
                     emit_lea(RDI, RBP, -var->val->loc);
-                    emit_memcpy_static(RDI, RSI, var->val->type->size, 1, 0);
+                    emit_memcpy_static_aligned_to_8_discard(RDI, RSI, var->val->type->size, 1, 0);
                 }
             }
             
@@ -4330,7 +4376,7 @@ void compile_globals_collect(Node * ast)
                     // move variable location into RAX
                     emit_mov_imm64(RAX, var->val->loc);
                     log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
-                    emit_mov_preg_reg(RAX, RDX, val->val->type->size);
+                    emit_mov_preg_reg_discard(RAX, RDX, val->val->type->size);
                 }
                 else
                     assert(("TODO: assign composites in global initializers", 0));
@@ -4461,6 +4507,13 @@ void compile(Node * ast)
         stack_loc = 0;
         local_vars = 0;
         
+        // need to push rdi, rsi (non-clobbered)
+        if (abi == ABI_WIN)
+            stack_loc += 16;
+        // need to push rdi, rsi, rcx (args)
+        else if (abi == ABI_SYSV)
+            stack_loc += 32;
+        
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         if (abi == ABI_WIN)
@@ -4479,6 +4532,7 @@ void compile(Node * ast)
         }
         
         assert(stack_loc >= 0);
+        assert(stack_offset == 0);
         
         if (abi == ABI_WIN)
         {

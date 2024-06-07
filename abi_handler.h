@@ -1,5 +1,10 @@
 #include <stdint.h>
 
+// super primitive ABI / calling convention handling
+// - only C compatible for primitives (u8~i64, f32/f64, ptr)
+// - not C compatible for structs. structs are always passed by pointer.
+// - note that C arrays are identical to pointers to the contained type on function boundaries
+
 enum {
     ABI_WIN,
     ABI_SYSV,
