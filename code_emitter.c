@@ -7,7 +7,7 @@
 extern byte_buffer * code;
 
 // for debugging. disables optimization.
-#define EMITTER_ALWAYS_FLUSH
+//#define EMITTER_ALWAYS_FLUSH
 
 enum {
     RAX,
