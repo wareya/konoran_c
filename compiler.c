@@ -1194,7 +1194,7 @@ void _push_small_if_const(Value * item)
         if (item->loc > 0)
         {
             uint64_t val = 0;
-            memcpy(&val, (void *)item->loc, item->type->size);
+            memcpy(&val, static_data + item->loc, item->type->size);
             emit_push_val_safe(item->_val);
         }
         else
