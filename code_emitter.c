@@ -1490,14 +1490,14 @@ void _impl_emit_mov_xmm_from_offset(int reg_d, int reg_s, int64_t offset, size_t
     assert(reg_d >= XMM0 && reg_d <= XMM7);
     assert(reg_s <= R15);
     
-    reg_d &= 7;
-    reg_s &= 7;
-    
     byte_push(code, (size == 8) ? 0xF3 : 0x66);
-    if (reg_d >= R8)
+    if (reg_s >= R8)
         byte_push(code, 0x41);
     byte_push(code, 0x0F);
     byte_push(code, (size == 8) ? 0x7E : 0x6E);
+    
+    reg_d &= 7;
+    reg_s &= 7;
     
     _emit_addrblock(reg_d, reg_s, offset);
 }
@@ -1522,14 +1522,14 @@ void _impl_emit_mov_offset_from_xmm(int reg_d, int reg_s, int64_t offset, size_t
     assert(reg_d <= R15);
     assert(reg_s >= XMM0 && reg_s <= XMM7);
     
-    reg_d &= 7;
-    reg_s &= 7;
-    
     byte_push(code, 0x66);
     if (reg_d >= R8)
         byte_push(code, 0x41);
     byte_push(code, 0x0F);
     byte_push(code, (size == 8) ? 0xD6 : 0x7E);
+    
+    reg_d &= 7;
+    reg_s &= 7;
     
     _emit_addrblock(reg_s, reg_d, offset);
 }
@@ -2156,7 +2156,7 @@ void emit_rep_movs(int chunk_size)
     emitter_log_add_1(_impl_emit_rep_movs, chunk_size);
 }
 */
-void _impl_emit_memcpy_static(size_t count, int chunk_size, int direction_is_down)
+void _impl_emit_memcpy_slow(size_t count, int chunk_size, int direction_is_down)
 {
      _emit_mov_imm(RCX, count, 8);
      
@@ -2166,6 +2166,21 @@ void _impl_emit_memcpy_static(size_t count, int chunk_size, int direction_is_dow
      if (direction_is_down)
          byte_push(code, 0xFC); // CLD
 }
+
+void emit_memcpy_slow(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
+{
+    assert(reg_d <= R15 && reg_s <= R15);
+    assert(reg_s != RDI);
+    assert(reg_d != RSI);
+    
+    if (reg_s != RSI)
+        emitter_log_add_3(_impl_emit_mov, RSI, reg_s, 8);
+    if (reg_d != RDI)
+        emitter_log_add_3(_impl_emit_mov, RDI, reg_d, 8);
+    
+    emitter_log_add_3(_impl_emit_memcpy_slow, count, chunk_size, direction_is_down);
+}
+
 /*
 void _emit_push_preg(int reg)
 {
@@ -2178,40 +2193,53 @@ void _emit_push_preg(int reg)
 // 41 ff 75 00             push   QWORD PTR [r13+0x0]
 }
 */
-// registers must be pre-filled: RSI, RDI
-// thrashes RCX, RSI, RDI, DF (direction flag)
-void emit_memcpy_static(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
+void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset)
 {
-    assert(reg_d <= R15 && reg_s <= R15);
-    if ((chunk_size * count == 8 || chunk_size * count == 4 || chunk_size * count == 2 || chunk_size * count == 1)
-        && !direction_is_down)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset_discard, RCX, reg_s, 0, chunk_size * count);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, chunk_size * count);
-    }
-    else
-    {
-        assert(reg_s != RDI);
-        assert(reg_d != RSI);
-        
-        if (reg_s != RSI)
-            emitter_log_add_3(_impl_emit_mov, RSI, reg_s, 8);
-        
-        if (reg_d != RDI)
-            emitter_log_add_3(_impl_emit_mov, RDI, reg_d, 8);
-        
-        emitter_log_add_3(_impl_emit_memcpy_static, count, chunk_size, direction_is_down);
-    }
+    last_is_terminator = 0;
+    assert(reg_d >= XMM0 && reg_d <= XMM7);
+    assert(reg_s <= R15);
+    
+    if (reg_s >= R8)
+        byte_push(code, 0x41);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x10);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    _emit_addrblock(reg_d, reg_s, offset);
 }
-// memcpy_static but guaranteed to have 8-byte alignment
+
+void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
+{
+// 0f 11 00                movups XMMWORD PTR [rax],xmm0
+// 0f 11 40 01             movups XMMWORD PTR [rax+0x1],xmm0
+// 0f 11 78 01             movups XMMWORD PTR [rax+0x1],xmm7
+// 41 0f 11 78 01          movups XMMWORD PTR [r8+0x1],xmm7
+    
+    last_is_terminator = 0;
+    assert(reg_d <= R15);
+    assert(reg_s >= XMM0 && reg_s <= XMM7);
+    
+    if (reg_d >= R8)
+        byte_push(code, 0x41);
+    byte_push(code, 0x0F);
+    byte_push(code, 0x11);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    _emit_addrblock(reg_s, reg_d, offset);
+}
+
+
 void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
 {
     assert(("downwards aligned memcpy not supported yet", !direction_is_down));
     
     assert(reg_d <= R15 && reg_s <= R15);
     
-    size_t total = (count * chunk_size);
-    size_t fast_part = total - (total % 8);
+    size_t total = count * chunk_size;
     
     //printf("---1-1`-`-`_~_`1--`1- emitting memcpy with size %zu\n", total);
     
@@ -2226,17 +2254,46 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, i
         reg_d = RDI;
     }
     
-    size_t i;
-    for (i = 0; i + 8 <= fast_part; i += 8)
+    size_t i = 0;
+    /*
+    // slower for mystery reasons
+    if (total >= 24)
     {
-        _impl_emit_mov_offset     (RCX, reg_s, i, 8);
-        _impl_emit_mov_into_offset(reg_d, RCX, i, 8);
+        size_t fast_part = total - (total % 16);
+        for (i = 0; i + 16 <= fast_part; i += 16)
+        {
+            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i);
+            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i);
+        }
+        if (total > 16 && total != fast_part)
+        {
+            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, total - 16);
+            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, total - 16);
+            return;
+        }
     }
-    if (total > 8 && total != fast_part)
+    else
+    */
+    if (total >= 8)
     {
-        _impl_emit_mov_offset     (RCX, reg_s, total - 8, 8);
-        _impl_emit_mov_into_offset(reg_d, RCX, total - 8, 8);
-        return;
+        size_t fast_part = total - (total % 8);
+        for (i = 0; i + 8 <= fast_part; i += 8)
+        {
+            _impl_emit_mov_offset     (RCX, reg_s, i, 8);
+            _impl_emit_mov_into_offset(reg_d, RCX, i, 8);
+        }
+        if (total > 8 && total != fast_part)
+        {
+            _impl_emit_mov_offset     (RCX, reg_s, total - 8, 8);
+            _impl_emit_mov_into_offset(reg_d, RCX, total - 8, 8);
+            return;
+        }
+    }
+    if ((total - i) >= 8)
+    {
+        _impl_emit_mov_offset_discard     (RCX, reg_s, i, 8);
+        _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 8);
+        i += 8;
     }
     if ((total - i) >= 4)
     {
@@ -2261,85 +2318,40 @@ void _impl_emit_memcpy_static_aligned_to_8_discard(int reg_d, int reg_s, size_t 
 {
     _impl_emit_memcpy_static_aligned_to_8(reg_d, reg_s, count, chunk_size, direction_is_down);
 }
-void emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
+void _inner_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down, uint8_t discard)
 {
-    // emit pure MOVs if copy is small. doing this so early helps the optimizer avoid single-register thrashing.
-    if (count * chunk_size == 8)
+    // emit pure MOVs if copy is small and simply-sized. doing this so early helps the optimizer avoid single-register thrashing.
+    if (count * chunk_size == 8 || count * chunk_size == 4 || count * chunk_size == 2 || count * chunk_size == 1)
     {
-        emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, 8);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 8);
+        emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, count * chunk_size);
+        if (discard)
+            emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, count * chunk_size);
+        else
+            emitter_log_add_4(_impl_emit_mov_into_offset        , reg_d, RCX, 0, count * chunk_size);
     }
-    else if (count * chunk_size == 4)
+    else if (count * chunk_size > 256)
     {
-        emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, 4);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 4);
-    }
-    else if (count * chunk_size == 2)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, 2);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 2);
-    }
-    else if (count * chunk_size == 1)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, 1);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 1);
-    }
-    else if (count * chunk_size > 128) // TODO: tune this based on what's actually slower
-    {
-        emit_memcpy_static(reg_d, reg_s, count, chunk_size, direction_is_down);
+        emit_memcpy_slow(reg_d, reg_s, count, chunk_size, direction_is_down);
     }
     else
-        emitter_log_add_5(_impl_emit_memcpy_static_aligned_to_8, reg_d, reg_s, count, chunk_size, direction_is_down);
+    {
+        if (discard)
+            emitter_log_add_5(_impl_emit_memcpy_static_aligned_to_8_discard, reg_d, reg_s, count, chunk_size, direction_is_down);
+        else
+            emitter_log_add_5(_impl_emit_memcpy_static_aligned_to_8        , reg_d, reg_s, count, chunk_size, direction_is_down);
+    }
 }
-
+// memcpy. may clobber RCX, RSI, RDI, XMM4, and flags.
+void emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
+{
+    _inner_emit_memcpy_static_aligned_to_8(reg_d, reg_s, count, chunk_size, direction_is_down, 0);
+}
 // aligned memcpy, but the source memory is not going to be used afterwards, and the source register is not going to be used to access the source memory afterwards
 void emit_memcpy_static_aligned_to_8_discard(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
 {
-    // emit pure MOVs if copy is small. doing this so early helps the optimizer avoid single-register thrashing.
-    if (count * chunk_size == 8)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset_discard     , RCX, reg_s, 0, 8);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 8);
-    }
-    else if (count * chunk_size == 4)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset_discard     , RCX, reg_s, 0, 4);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 4);
-    }
-    else if (count * chunk_size == 2)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset_discard     , RCX, reg_s, 0, 2);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 2);
-    }
-    else if (count * chunk_size == 1)
-    {
-        emitter_log_add_4(_impl_emit_mov_offset_discard     , RCX, reg_s, 0, 1);
-        emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, 1);
-    }
-    else if (count * chunk_size > 128) // TODO: tune this based on what's actually slower
-    {
-        emit_memcpy_static(reg_d, reg_s, count, chunk_size, direction_is_down);
-    }
-    else
-        emitter_log_add_5(_impl_emit_memcpy_static_aligned_to_8_discard, reg_d, reg_s, count, chunk_size, direction_is_down);
+    _inner_emit_memcpy_static_aligned_to_8(reg_d, reg_s, count, chunk_size, direction_is_down, 1);
 }
-/*
-void _impl_emit_memcpy_dynamic(int chunk_size, int direction_is_down)
-{
-    if (direction_is_down)
-        byte_push(code, 0xFD); // STD
-    else
-        byte_push(code, 0xFC); // CLD
-     
-     _emit_rep_movs(chunk_size);
-}
-// registers must be pre-filled: RSI, RDI, RCX
-// thrashes RCX, RSI, RDI, DF (direction flag)
-void emit_memcpy_dynamic(int chunk_size, int direction_is_down)
-{
-    emitter_log_add_2(_impl_emit_memcpy_dynamic, chunk_size, direction_is_down);
-}
-*/
+
 void _impl_emit_call(int reg)
 {
     last_is_terminator = 0;
@@ -2616,9 +2628,9 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_rep_movs)
         _impl_emit_rep_movs(log->args[0]);
     */
-    
-    else if (log->funcptr == (void *)_impl_emit_memcpy_static)
-        _impl_emit_memcpy_static(log->args[0], log->args[1], log->args[2]);
+        
+    else if (log->funcptr == (void *)_impl_emit_memcpy_slow)
+        _impl_emit_memcpy_slow(log->args[0], log->args[1], log->args[2]);
     
     else if (log->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8)
         _impl_emit_memcpy_static_aligned_to_8(log->args[0], log->args[1], log->args[2], log->args[3], log->args[4]);
@@ -2981,6 +2993,7 @@ uint8_t emitter_log_try_optimize(void)
             emitter_log_add(memcpy);
             return 1;
         }
+        
         // redundant memcpys
         if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8
              || log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard
@@ -3139,32 +3152,6 @@ uint8_t emitter_log_try_optimize(void)
             }
         }
     }
-    /*
-    if (emitter_log_size >= 3)
-    {
-        EmitterLog * log_up2 = emitter_log_get_nth(2);
-        EmitterLog * log_up1 = emitter_log_get_nth(1);
-        EmitterLog * log_up0 = emitter_log_get_nth(0);
-        
-        // redundant memcpy
-        if ((   log_up2->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8
-             || log_up2->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard
-            ) &&
-            log_next->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard &&
-            log_prev->args[0] != log_next->args[0] &&
-            log_prev->args[0] != RSP &&
-            log_next->args[0] != RSP)
-        {
-            uint64_t reg_d = emitter_log_erase_nth(0)->args[0];
-            uint64_t reg_s = emitter_log_erase_nth(0)->args[0];
-            if (log_prev->funcptr == (void *)_impl_emit_push_discard)
-                _emitter_log_add_3(1, _impl_emit_mov_discard, reg_d, reg_s, 8);
-            else
-                _emitter_log_add_3(1, _impl_emit_mov, reg_d, reg_s, 8);
-            return 1;
-        }
-    }
-    */
     return 0;
 }
 

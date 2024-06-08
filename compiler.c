@@ -2458,12 +2458,17 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 
                 GenericList * argwheres = 0;
+                Node * arg_node = next->first_child ? next->first_child->first_child : 0;
                 while (arg)
                 {
+                    assert(("too few args to function", arg_node));
                     Type * type = arg->item;
                     
                     if (type_is_composite(type))
-                        arg_storage_size += guess_stack_size_from_size(type->size);
+                    {
+                        if (arg_node->type != RVAR_NAME)
+                            arg_storage_size += guess_stack_size_from_size(type->size);
+                    }
                     
                     int64_t where = abi_get_next(type_is_float(type));
                     list_add(&argwheres, (void *)where);
@@ -2472,6 +2477,7 @@ void compile_code(Node * ast, int want_ptr)
                         arg_stack_size = -where;
                     
                     arg = arg->next;
+                    arg_node = arg_node->next_sibling;
                 }
                 while (arg_storage_size % 16)
                     arg_storage_size += 1;
@@ -2487,7 +2493,7 @@ void compile_code(Node * ast, int want_ptr)
                 
                 ptrdiff_t arg_storage_used = 0;
                 arg = funcdef->signature->next;
-                Node * arg_node = next->first_child ? next->first_child->first_child : 0;
+                arg_node = next->first_child ? next->first_child->first_child : 0;
                 
                 // arg evaluation
                 
@@ -2497,35 +2503,70 @@ void compile_code(Node * ast, int want_ptr)
                     assert(("too few args to function", arg_node));
                     Type * type = arg->item;
                     
-                    //compile_code(nth_child(node, 0), WANT_PTR_VIRTUAL);
-                    compile_code(arg_node, 0);
-                    StackItem * item = stack_pop();
-                    assert(item);
-                    Value * arg_expr = item->val;
-                    //printf("%s vs %s\n", arg_expr->type->name, type->name);
-                    
-                    //if (type_is_pointer(arg_expr->type) && type_is_pointer(type))
-                    //    printf("%s vs %s\n", arg_expr->type->inner_type->name, type->inner_type->name);
-                    
-                    assert(types_same(arg_expr->type, type));
+                    Value * arg_expr = 0;
+                    if (!type_is_composite(type) || arg_node->type != RVAR_NAME)
+                    {
+                        compile_code(arg_node, 0);
+                        StackItem * item = stack_pop();
+                        assert(item);
+                        arg_expr = item->val;
+                        assert(types_same(arg_expr->type, type));
+                    }
                     
                     if (type_is_composite(type))
                     {
-                        size_t size = guess_stack_size_from_size(type->size);
-                        
-                        ////// this here
-                        emit_lea(RAX, RSP, temp_used + arg_stack_size + arg_storage_used);
-                        
-                        if (arg_expr->kind == VAL_CONSTANT)
-                            assert(("TODO store constant composite arg", 0));
+                        if (arg_node->type == RVAR_NAME)
+                        {
+                            Variable * var = get_local(arg_node->text, arg_node->textlen);
+                            if (!var)
+                                var = get_global(arg_node->text, arg_node->textlen);
+                            if (!var)
+                            {
+                                char * str = strcpy_len(arg_node->text, arg_node->textlen);
+                                printf("culprit: %s\n", str);
+                                assert(("variable not found!", 0));
+                            }
+                            Value * value = var->val;
+                            if (value->kind == VAL_STACK_BOTTOM)
+                            {
+                                emit_lea(RAX, RBP, -value->loc);
+                                emit_push_safe(RAX);
+                            }
+                            else if (value->kind == VAL_GLOBAL)
+                            {
+                                emit_mov_imm64(RAX, value->loc);
+                                log_global_relocation(emitter_get_code_len() - 8, value->loc);
+                            }
+                            else if (value->kind == VAL_CONSTANT)
+                            {
+                                size_t loc = value->loc;
+                                if (value->mem)
+                                    loc = push_static_data(value->mem, value->type->size);
+                                
+                                emit_mov_imm64(RAX, loc);
+                                log_static_relocation(emitter_get_code_len() - 8, loc);
+                            }
+                            else
+                                assert(("internal error: unknown var source kind in func args", 0));
+                        }
                         else
                         {
-                            emit_memcpy_static_aligned_to_8_discard(RAX, RSP, type->size, 1, 0);
-                            emit_shrink_stack_safe(size);
+                            size_t size = guess_stack_size_from_size(type->size);
+                            
+                            ////// this here
+                            emit_lea(RAX, RSP, temp_used + arg_stack_size + arg_storage_used);
+                            
+                            if (arg_expr->kind == VAL_CONSTANT)
+                                assert(("TODO store constant composite arg", 0));
+                            else
+                            {
+                                emit_memcpy_static_aligned_to_8_discard(RAX, RSP, type->size, 1, 0);
+                                emit_shrink_stack_safe(size);
+                            }
+                            arg_storage_used += size;
+                            assert(arg_storage_used <= arg_storage_size);
+                            emit_push_safe(RAX);
                         }
-                        arg_storage_used += size;
-                        assert(arg_storage_used <= arg_storage_size);
-                        emit_push_safe_discard(RAX);
                     }
                     else
                         _push_small_if_const(arg_expr);
@@ -4178,6 +4219,7 @@ void compile_code(Node * ast, int want_ptr)
     //printf("code len after token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
 }
 
+// *found_new must start out set to 0. if a single particular in-place return is found, 
 void compile_def_find_inplace_return(Node * ast, const FuncDef * funcdef, char ** found_name)
 {
     
