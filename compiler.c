@@ -1600,49 +1600,46 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         }
         else if (op == '%')
         {
+            emit_float_remainder(XMM0, XMM1, size);
+            emit_xmm_push_safe_discard(XMM0, size);
             // approximated as x - y * trunc(x/y)
 /*
 // need these for remainder
 
 // trunc for f32
 0:  66 0f 7e c0             movd   eax,xmm0
-4:  89 c1                   mov    ecx,eax
-6:  c1 e9 17                shr    ecx,0x17
-9:  80 e9 7f                sub    cl,0x7f
-c:  78 14                   js     22 <L6>
-e:  80 f9 1f                cmp    cl,0x1f
-11: 7f 18                   jg     2b <out>
-13: ba 00 00 80 ff          mov    edx,0xff800000
-18: d3 fa                   sar    edx,cl
-1a: 21 c2                   and    edx,eax
-1c: 66 0f 6e c2             movd   xmm0,edx
-20: eb 09                   jmp    2b <out>
-0000000000000022 <L6>:
-22: 25 00 00 00 80          and    eax,0x80000000
-27: 66 0f 6e c0             movd   xmm0,eax
+4:  b9 96 00 00 00          mov    ecx,0x96
+9:  31 f6                   xor    esi,esi
+b:  89 c2                   mov    edx,eax
+d:  c1 ea 17                shr    edx,0x17
+10: 0f b6 d2                movzx  edx,dl
+13: 29 d1                   sub    ecx,edx
+15: 83 f9 19                cmp    ecx,0x19
+18: 0f 43 ce                cmovae ecx,esi
+1b: 83 fa 7e                cmp    edx,0x7e
+1e: ba 1f 00 00 00          mov    edx,0x1f
+23: 0f 46 ca                cmovbe ecx,edx
+26: d3 e8                   shr    eax,cl
+28: d3 e0                   shl    eax,cl
+2a: 66 0f 6e c0             movd   xmm0,eax
 
 // trunc for f64
 0:  66 48 0f 7e c0          movq   rax,xmm0
-5:  48 89 c1                mov    rcx,rax
-8:  48 c1 e9 1f             shr    rcx,0x1f
-c:  81 c1 00 00 20 80       add    ecx,0x80200000
-12: c1 f9 15                sar    ecx,0x15
-15: 78 1c                   js     33 <LBB1_1>
-17: 83 f9 3f                cmp    ecx,0x3f
-1a: 77 29                   ja     45 <out>
-1c: 48 ba 00 00 00 00 00    movabs rdx,0xfff0000000000000
-23: 00 f0 ff
-26: 48 d3 fa                sar    rdx,cl
-29: 48 21 d0                and    rax,rdx
-2c: 66 48 0f 6e c0          movq   xmm0,rax
-31: eb 12                   jmp    45 <out>
-0000000000000033 <LBB1_1>:
-33: 48 ba 00 00 00 00 00    movabs rdx,0x8000000000000000
-3a: 00 00 80
-3d: 48 21 d0                and    rax,rdx
-40: 66 48 0f 6e c0          movq   xmm0,rax
+5:  b9 33 08 00 00          mov    ecx,0x833
+a:  31 f6                   xor    esi,esi
+c:  48 89 c2                mov    rdx,rax
+f:  48 c1 ea 34             shr    rdx,0x34
+13: 81 e2 ff 07 00 00       and    edx,0x7ff
+19: 29 d1                   sub    ecx,edx
+1b: 83 f9 36                cmp    ecx,0x36
+1e: 0f 43 ce                cmovae ecx,esi
+21: 81 fa fe 03 00 00       cmp    edx,0x3fe
+27: ba 3f 00 00 00          mov    edx,0x3f
+2c: 0f 46 ca                cmovbe ecx,edx
+2f: 48 d3 e8                shr    rax,cl
+32: 48 d3 e0                shl    rax,cl
+35: 66 48 0f 6e c0          movq   xmm0,rax
 */
-            assert(("float remainder not implemented yet!", 0));
         }
         else
             assert(("operation not supported on floats", 0));

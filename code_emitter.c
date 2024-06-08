@@ -843,6 +843,7 @@ void _impl_emit_float_div(int reg_d, int reg_s, size_t size)
 {
     _emit_float_op(reg_d, reg_s, size, 0x5E);
 }
+// left is top, right is bottom
 void emit_float_div(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_float_div, reg_d, reg_s, size);
@@ -874,6 +875,74 @@ void emit_float_sqrt(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_float_sqrt, reg_d, reg_s, size);
 }
+
+// ---
+// can only operate on RAX. hardcoded.
+// clobbers RAX, RDX, RCX, RSI, flags
+void _impl_emit_float_bits_trunc(size_t size)
+{
+    assert(size == 4 || size == 8);
+    
+    // trunc for f32
+    // equivalent to, with float bits in uint32_t bits:
+    //
+    // uint32_t mpart = ((bits >> 23) & 0xFF);
+    // uint32_t shift = 22 - (mpart - (1<<7));
+    // if (shift > 24)
+    //     shift = 0;
+    // if (mpart < 0x7F)
+    //     shift = 31;
+    // uint8_t s = shift;
+    // bits = (bits >> s) << s;
+    
+    char trunc_f32[] = {
+        0xb9, 0x96, 0x00, 0x00, 0x00, // mov    ecx,0x96
+        0x31, 0xf6,                   // xor    esi,esi
+        0x89, 0xc2,                   // mov    edx,eax
+        0xc1, 0xea, 0x17,             // shr    edx,0x17
+        0x0f, 0xb6, 0xd2,             // movzx  edx,dl
+        0x29, 0xd1,                   // sub    ecx,edx
+        0x83, 0xf9, 0x19,             // cmp    ecx,0x19
+        0x0f, 0x43, 0xce,             // cmovae ecx,esi
+        0x83, 0xfa, 0x7e,             // cmp    edx,0x7e
+        0xba, 0x1f, 0x00, 0x00, 0x00, // mov    edx,0x1f
+        0x0f, 0x46, 0xca,             // cmovbe ecx,edx
+        0xd3, 0xe8,                   // shr    eax,cl
+        0xd3, 0xe0,                   // shl    eax,cl
+    };
+    
+    // trunc for f64
+    // input/output is RAX
+    // clobbers ESI, RDX, RAX, RCX, flags
+    // equivalent to above with different numbers
+    char trunc_f64[] = {
+        0xb9, 0x33, 0x04, 0x00, 0x00,        // mov    ecx,0x433
+        0x31, 0xf6,                          // xor    esi,esi
+        0x48, 0x89, 0xc2,                    // mov    rdx,rax
+        0x48, 0xc1, 0xea, 0x34,              // shr    rdx,0x34
+        0x81, 0xe2, 0xff, 0x07, 0x00, 0x00,  // and    edx,0x7ff
+        0x29, 0xd1,                          // sub    ecx,edx
+        0x83, 0xf9, 0x36,                    // cmp    ecx,0x36
+        0x0f, 0x43, 0xce,                    // cmovae ecx,esi
+        0x81, 0xfa, 0xfe, 0x03, 0x00, 0x00,  // cmp    edx,0x3fe
+        0xba, 0x3f, 0x00, 0x00, 0x00,        // mov    edx,0x3f
+        0x0f, 0x46, 0xca,                    // cmovbe ecx,edx
+        0x48, 0xd3, 0xe8,                    // shr    rax,cl
+        0x48, 0xd3, 0xe0,                    // shl    rax,cl
+    };
+    
+    if (size == 4)
+    {
+        for (size_t i = 0; i < sizeof(trunc_f32); i++)
+            byte_push(code, trunc_f32[i]);
+    }
+    else
+    {
+        for (size_t i = 0; i < sizeof(trunc_f64); i++)
+            byte_push(code, trunc_f64[i]);
+    }
+}
+
 
 void _impl_emit_xorps(int reg_d, int reg_s)
 {
@@ -1924,6 +1993,54 @@ void emit_push_val(int64_t val)
 {
     emitter_log_add_1(_impl_emit_push_val, val);
 }
+
+
+// approximated as: y * (x/y - trunc(x/y))
+// clobbers RAX, RDX, RCX, RSI, flags, and:
+// for f32s, the highest two non-dest/source XMM registers (starting at 7, going down)
+// for f64s, the highest single non-dest/source XMM register (starting at 7, going down)
+void emit_float_remainder(int reg_d, int reg_s, size_t size)
+{
+    assert(size == 4 || size == 8);
+    assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
+    
+    int reg_temp = XMM7;
+    if (reg_temp == reg_s || reg_temp == reg_d)
+        reg_temp -= 1;
+    assert(reg_temp != reg_s && reg_temp != reg_d);
+    
+    // convert floats to double for more accurate calculation
+    if (size == 4)
+    {
+        int reg_temp_s = reg_temp - 1;
+        while (reg_temp_s == reg_s || reg_temp_s == reg_d)
+            reg_temp_s -= 1;
+        assert(reg_temp_s >= XMM0 && reg_temp_s <= XMM7);
+        
+        emitter_log_add_4(_impl_emit_cast_float_to_float, reg_temp_s, reg_s, 8, 4);
+        emitter_log_add_4(_impl_emit_cast_float_to_float, reg_d, reg_d, 8, 4);
+        
+        emitter_log_add_3(_impl_emit_float_div, reg_d, reg_temp_s, 8);
+        emitter_log_add_3(_impl_emit_mov_base_from_xmm, RAX, reg_d, 8);
+        emitter_log_add_1(_impl_emit_float_bits_trunc, 8);
+        emitter_log_add_3(_impl_emit_mov_xmm_from_base, reg_temp, RAX, 8);
+        emitter_log_add_3(_impl_emit_float_sub, reg_d, reg_temp, 8);
+        emitter_log_add_3(_impl_emit_float_mul, reg_d, reg_temp_s, 8);
+        
+        emitter_log_add_4(_impl_emit_cast_float_to_float, reg_d, reg_d, 4, 8);
+    }
+    else
+    {
+        emitter_log_add_3(_impl_emit_float_div, reg_d, reg_s, size);
+        emitter_log_add_3(_impl_emit_mov_base_from_xmm, RAX, reg_d, size);
+        emitter_log_add_1(_impl_emit_float_bits_trunc, size);
+        emitter_log_add_3(_impl_emit_mov_xmm_from_base, reg_temp, RAX, size);
+        emitter_log_add_3(_impl_emit_float_sub, reg_d, reg_temp, size);
+        emitter_log_add_3(_impl_emit_float_mul, reg_d, reg_s, size);
+    }
+}
+
+
 void _impl_emit_breakpoint(void)
 {
     last_is_terminator = 0;
@@ -2333,6 +2450,9 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_float_sqrt)
         _impl_emit_float_sqrt(log->args[0], log->args[1], log->args[2]);
     
+    else if (log->funcptr == (void *)_impl_emit_float_bits_trunc)
+        _impl_emit_float_bits_trunc(log->args[0]);
+    
     else if (log->funcptr == (void *)_impl_emit_xorps)
         _impl_emit_xorps(log->args[0], log->args[1]);
     
@@ -2531,15 +2651,11 @@ uint8_t emitter_log_try_optimize(void)
     {
         EmitterLog * log_next = emitter_log_get_nth(0);
         
-        if (log_next->funcptr == (void *)_impl_emit_mov &&
-            log_next->args[0] == log_next->args[1] &&
-            log_next->args[0] != 4)
-        {
-            emitter_log_erase_nth(0);
-            return 1;
-        }
-        
-        if (log_next->funcptr == (void *)_impl_emit_mov_discard &&
+        if ((   log_next->funcptr == (void *)_impl_emit_mov
+             || log_next->funcptr == (void *)_impl_emit_mov_discard
+             || log_next->funcptr == (void *)_impl_emit_mov_xmm_xmm
+             || log_next->funcptr == (void *)_impl_emit_mov_xmm_xmm_discard
+            ) &&
             log_next->args[0] == log_next->args[1] &&
             log_next->args[0] != 4)
         {
