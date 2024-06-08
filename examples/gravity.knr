@@ -1,4 +1,20 @@
-
+void main()
+{
+    f32 y;
+    f32 gravity;
+    f32 delta;
+    
+    y = 0.0f32;
+    delta = 0.01f32;
+    gravity = 90.8f32;
+    
+    y = delta*gravity;
+    
+    print_float((y) as f64);
+    
+    return;
+}
+/*
 void main()
 {
     u64 i;
@@ -29,3 +45,4 @@ head:
     
     return;
 }
+*/

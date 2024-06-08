@@ -2676,7 +2676,6 @@ uint8_t emitter_log_try_optimize(void)
             log_prev->args[0] == log_next->args[1] &&
             log_prev->args[2] <= log_next->args[3])
         {
-            puts("`-`_!-1`-`13-~!_`1-");
             if (log_prev->args[0] == log_next->args[1])
             {
                 EmitterLog * mov = emitter_log_erase_nth(0);
@@ -2685,8 +2684,6 @@ uint8_t emitter_log_try_optimize(void)
                 _emitter_log_add_4(1, _impl_emit_mov_offset_from_xmm, mov->args[0], movxmm->args[1], mov->args[2], mov->args[3]);
                 return 1;
             }
-            else
-                printf("`-`_!-1`-`13-~!_`1- but FAILED %d %d\n", log_prev->args[0], log_next->args[1]);
         }
         if (log_prev->funcptr == (void *)_impl_emit_lea_fused_push &&
             log_next->funcptr == (void *)_impl_emit_pop)
@@ -2734,7 +2731,7 @@ uint8_t emitter_log_try_optimize(void)
                 log_prev->funcptr == (void *)_impl_emit_xmm_pop
             );
             
-            if (next_singular || (log_prev->args[0] != log_next->args[1]))
+            if (next_singular || (log_prev->args[1] != log_next->args[0] && log_prev->args[0] != log_next->args[1]))
             {
                 EmitterLog * pop = emitter_log_erase_nth(0);
                 EmitterLog * mov = emitter_log_erase_nth(0);
@@ -2787,7 +2784,7 @@ uint8_t emitter_log_try_optimize(void)
                 log_prev->funcptr == (void *)_impl_emit_push ||
                 log_prev->funcptr == (void *)_impl_emit_push_discard
             );
-            if (prev_singular || log_prev->args[1] != log_next->args[0])
+            if (prev_singular || (log_prev->args[1] != log_next->args[0] && log_prev->args[0] != log_next->args[1]))
             {
                 EmitterLog * mov = emitter_log_erase_nth(0);
                 EmitterLog * push = emitter_log_erase_nth(0);
@@ -2796,6 +2793,7 @@ uint8_t emitter_log_try_optimize(void)
                 return 1;
             }
         }
+        
         // swap for more effective optimization
         if ((   log_prev->funcptr == (void *)_impl_emit_push
              || log_prev->funcptr == (void *)_impl_emit_push_discard
@@ -2852,7 +2850,6 @@ uint8_t emitter_log_try_optimize(void)
             emitter_log_add(memcpy);
             return 1;
         }
-        
         // redundant memcpys
         if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8
              || log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard
