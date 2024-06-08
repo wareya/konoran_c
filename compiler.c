@@ -4,6 +4,21 @@
 #include <math.h> // remainder, remainderf
 #include "buffers.h"
 
+// returns the exponent plus one if n is a power of 2, otherwise returns 0
+uint8_t is_po2(uint64_t n)
+{
+    uint8_t i = 0;
+    while (!(n & 1))
+    {
+        i++;
+        n >>= 1;
+    }
+    if (n == 1)
+        return i + 1;
+    else
+        return 0;
+}
+
 __attribute__((noreturn))
 void crash(void)
 {
@@ -328,10 +343,13 @@ typedef struct _Type
     int variant; // for all
     
     int primitive_type; // for primitives
+    
     struct _Type * inner_type; // for pointers and arrays
     struct _FuncDef * funcdef; // for funcptrs
     uint64_t inner_count; // for arrays
     StructData * struct_data; // for structs
+    
+    uint8_t is_volatile; // for pointers
     
     struct _Type * next_type;
 } Type;
@@ -1602,44 +1620,6 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         {
             emit_float_remainder(XMM0, XMM1, size);
             emit_xmm_push_safe_discard(XMM0, size);
-            // approximated as x - y * trunc(x/y)
-/*
-// need these for remainder
-
-// trunc for f32
-0:  66 0f 7e c0             movd   eax,xmm0
-4:  b9 96 00 00 00          mov    ecx,0x96
-9:  31 f6                   xor    esi,esi
-b:  89 c2                   mov    edx,eax
-d:  c1 ea 17                shr    edx,0x17
-10: 0f b6 d2                movzx  edx,dl
-13: 29 d1                   sub    ecx,edx
-15: 83 f9 19                cmp    ecx,0x19
-18: 0f 43 ce                cmovae ecx,esi
-1b: 83 fa 7e                cmp    edx,0x7e
-1e: ba 1f 00 00 00          mov    edx,0x1f
-23: 0f 46 ca                cmovbe ecx,edx
-26: d3 e8                   shr    eax,cl
-28: d3 e0                   shl    eax,cl
-2a: 66 0f 6e c0             movd   xmm0,eax
-
-// trunc for f64
-0:  66 48 0f 7e c0          movq   rax,xmm0
-5:  b9 33 08 00 00          mov    ecx,0x833
-a:  31 f6                   xor    esi,esi
-c:  48 89 c2                mov    rdx,rax
-f:  48 c1 ea 34             shr    rdx,0x34
-13: 81 e2 ff 07 00 00       and    edx,0x7ff
-19: 29 d1                   sub    ecx,edx
-1b: 83 f9 36                cmp    ecx,0x36
-1e: 0f 43 ce                cmovae ecx,esi
-21: 81 fa fe 03 00 00       cmp    edx,0x3fe
-27: ba 3f 00 00 00          mov    edx,0x3f
-2c: 0f 46 ca                cmovbe ecx,edx
-2f: 48 d3 e8                shr    rax,cl
-32: 48 d3 e0                shl    rax,cl
-35: 66 48 0f 6e c0          movq   xmm0,rax
-*/
         }
         else
             assert(("operation not supported on floats", 0));
@@ -1945,7 +1925,9 @@ void compile_unary_plus(StackItem * val)
 void compile_unary_volatile(StackItem * val)
 {
     assert(type_is_pointer(val->val->type));
-    // TODO/FIXME: flush mem2reg optimizations (once added)
+    Type * type = make_ptr_type(val->val->type->inner_type);
+    type->is_volatile = 1;
+    val->val->type = type;
     stack_push(val);
 }
 void compile_unary_minus(StackItem * val)
@@ -2288,8 +2270,8 @@ void compile_code(Node * ast, int want_ptr)
                 if (want_ptr == 0)
                 {
                     stack_push_new(var->val);
-                    printf("rvar is const...? %d\n", var->val->kind == VAL_CONSTANT);
-                    printf("__ __ -!_ -> %zd %zd %p\n", var->val->_val, var->val->loc, (void *)var->val->mem);
+                    //printf("rvar is const...? %d\n", var->val->kind == VAL_CONSTANT);
+                    //printf("__ __ -!_ -> %zd %zd %p\n", var->val->_val, var->val->loc, (void *)var->val->mem);
                 }
                 else
                 {
@@ -2439,7 +2421,7 @@ void compile_code(Node * ast, int want_ptr)
             case FUNCARGS:
             {
                 size_t stack_offset_at_funcptr = stack_offset;
-                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                //printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
                 //printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
                 
                 Value * expr = stack_pop()->val;
@@ -2563,7 +2545,7 @@ void compile_code(Node * ast, int want_ptr)
                     size_t size = type_stack_size(callee_return_type);
                     
                     int64_t where = return_where;
-                    printf("!!19519 5   3#)!951910 return location %zX ----!!!513\n", return_where);
+                    //printf("!!19519 5   3#)!951910 return location %zX ----!!!513\n", return_where);
                     if (where >= 0)
                         emit_lea(where, RSP, temp_used + total_stack_expansion + 8);
                     else
@@ -2648,7 +2630,7 @@ void compile_code(Node * ast, int want_ptr)
                 
                 //assert(stack_offset == stack_offset_at_funcptr);
                 
-                printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
+                //printf("__ _ !@#!@#--- stack offset is %zd\n", stack_offset);
                 //printf("__ _ !@#!@#--- eval stack height is %zd\n", eval_stack_height);
             } break;
             case ARRAYINDEX:
@@ -2674,13 +2656,30 @@ void compile_code(Node * ast, int want_ptr)
                 Value * value = item->val;
                 assert(("Array indexes must be i64s!", type_is_int(value->type) && type_is_signed(value->type) && value->type->size == 8));
                 
-                _push_small_if_const(value);
-                emit_pop_safe(RAX);
-                
                 Type * inner_type = array_type->inner_type;
                 size_t inner_size = guess_aligned_size_from_size(inner_type->size);
-                emit_mov_imm(RDX, inner_size, 8);
-                emit_imul(RDX, 8);
+                
+                printf("--~~``-`-`-`_~109111~~``!~``031~#!) inner size %zu\n", inner_size);
+                
+                if (value->kind == VAL_CONSTANT)
+                {
+                    int64_t _val = value->_val;
+                    emit_mov_imm(RAX, inner_size * _val, 8);
+                }
+                else
+                {
+                    emit_pop_safe(RAX);
+                    
+                    if (!is_po2(inner_size))
+                    {
+                        emit_mov_imm(RDX, inner_size, 8);
+                        emit_imul(RDX, 8);
+                    }
+                    else
+                    {
+                        emit_shl_imm(RAX, is_po2(inner_size)-1, 8);
+                    }
+                }
                 
                 // possible cases:
                 //
@@ -2942,9 +2941,6 @@ void compile_code(Node * ast, int want_ptr)
                 emit_pop_safe(RAX);
                 emit_expand_stack_safe(stack_size - inner_size);
                 emit_push_safe_discard(RAX);
-                
-                //emit_mov_imm(RAX, first->_val, inner_size);
-                //emit_mov_preg_reg(RSP, RAX, inner_size);
             }
             else
             {
@@ -2962,7 +2958,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 assert(!first->mem && !first->loc); // FIXME wrong
                 emit_mov_imm(RAX, first->_val, inner_size);
-                emit_mov_preg_reg_discard(RSP, RAX, inner_size);
+                emit_mov_into_offset(RSP, RAX, 0, inner_size);
             }
             else
             {
@@ -3247,34 +3243,49 @@ void compile_code(Node * ast, int want_ptr)
     {
         assert(eval_stack_height == 0);
         
-        compile_code(nth_child(ast, 0), 0);
-        Value * target = stack_pop()->val;
-        _push_small_if_const(target);
+        uint8_t simple_target = 0;
+        if (nth_child(ast, 0)->first_child->type == LVAR_NAME)
+            simple_target = 1;
+        if (nth_child(ast, 0)->first_child->type == RHUNEXPR && nth_child(nth_child(ast, 0)->first_child, 0)->type == RVAR_NAME)
+        {
+            simple_target = 1;
+            for (size_t i = 1; i < nth_child(ast, 0)->first_child->childcount; i += 1)
+            {
+                if (nth_child(nth_child(ast, 0)->first_child, i)->type != INDIRECTION)
+                {
+                    simple_target = 0;
+                    break;
+                }
+            }
+        }
+        //printf("-1!!!!-1-`-`1-1-` -`! _~! -`1 -`- `     %d\n", nth_child(ast, 0)->first_child->type);
+        
+        Value * target = 0;
+        
+        if (!simple_target)
+        {
+            compile_code(nth_child(ast, 0), 0);
+            target = stack_pop()->val;
+        }
         
         compile_code(nth_child(ast, 1), 0);
         Value * expr = stack_pop()->val;
         
-        printf("%d\n", target->kind);
-        printf("stack height: %zu\n", eval_stack_height);
-        assert(("tried to assign to constant!", target->kind != VAL_CONSTANT));
-        assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_STACK_TOP);
-        assert(target);
-        assert(expr);
+        //printf("stack height: %zu\n", eval_stack_height);
+        //assert(("tried to assign to constant!", target->kind != VAL_CONSTANT));
         
-        if (target->kind == VAL_STACK_TOP)
-        {
-            assert(type_is_pointer(target->type));
-            assert(types_same(target->type->inner_type, expr->type));
-        }
-        else if (target->kind == VAL_STACK_BOTTOM)
-        {
-            assert(types_same(target->type, expr->type));
-        }
+        assert(expr);
         
         if (type_is_composite(expr->type))
         {
             if (expr->kind == VAL_CONSTANT)
             {
+                if (simple_target)
+                {
+                    compile_code(nth_child(ast, 0), 0);
+                    target = stack_pop()->val;
+                }
+                
                 emit_pop_safe(RDI);
                 
                 if (expr->mem)
@@ -3296,15 +3307,27 @@ void compile_code(Node * ast, int want_ptr)
                 assert(expr->kind == VAL_STACK_TOP);
                 
                 size_t size = guess_stack_size_from_size(expr->type->size);
-                //printf("%zu, %zu\n", size + 8, stack_offset);
+                
+                if (simple_target)
+                {
+                    compile_code(nth_child(ast, 0), 0);
+                    target = stack_pop()->val;
+                }
+                
                 assert((ptrdiff_t)size + 8 == stack_offset);
                 
-                emit_mov_offset(RDX, RSP, size, 8);
-                
-                //emit_breakpoint();
+                if (!simple_target)
+                    emit_mov_offset(RDX, RSP, size, 8);
+                else
+                    emit_pop_safe(RDX);
                 
                 emit_memcpy_static_aligned_to_8_discard(RDX, RSP, expr->type->size, 1, 0);
-                emit_shrink_stack_safe(size + 8);
+                emit_memcpy_static_aligned_to_8_discard(RDX, RSP, expr->type->size, 1, 0);
+                
+                if (!simple_target)
+                    emit_shrink_stack_safe(size + 8);
+                else
+                    emit_shrink_stack_safe(size);
             }
         }
         else
@@ -3312,10 +3335,30 @@ void compile_code(Node * ast, int want_ptr)
             _push_small_if_const(expr);
             emit_pop_safe(RDX); // value into RDX
             
+            if (simple_target)
+            {
+                compile_code(nth_child(ast, 0), 0);
+                target = stack_pop()->val;
+            }
+            
             emit_pop_safe(RAX); // destination location into RAX
             
-            emit_mov_preg_reg_discard(RAX, RDX, expr->type->size);
+            emit_mov_into_offset_bothdiscard(RAX, RDX, 0, expr->type->size);
         }
+        
+        assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_STACK_TOP);
+        assert(target);
+        
+        if (target->kind == VAL_STACK_TOP)
+        {
+            assert(type_is_pointer(target->type));
+            assert(types_same(target->type->inner_type, expr->type));
+        }
+        else if (target->kind == VAL_STACK_BOTTOM)
+        {
+            assert(types_same(target->type, expr->type));
+        }
+        
     } break;
     case SIZEOF:
     {
@@ -3948,7 +3991,13 @@ void compile_code(Node * ast, int want_ptr)
                         if (!type_is_composite(new_type))
                         {
                             emit_pop_safe(RDX);
+                            
+                            if (val->val->type->is_volatile)
+                                emitter_log_flush();
                             emit_mov_reg_preg_discard(RAX, RDX, new_type->size);
+                            if (val->val->type->is_volatile)
+                                emitter_log_flush();
+                            
                             emit_push_safe_discard(RAX);
                         }
                         else
@@ -3958,7 +4007,13 @@ void compile_code(Node * ast, int want_ptr)
                             // destination location
                             size_t aligned_size = type_stack_size(new_type);
                             emit_expand_stack_safe(aligned_size);
+                            
+                            if (val->val->type->is_volatile)
+                                emitter_log_flush();
                             emit_memcpy_static_aligned_to_8_discard(RSP, RSI, new_type->size, 1, 0);
+                            if (val->val->type->is_volatile)
+                                emitter_log_flush();
+                            
                         }
                         Value * value = new_value(new_type);
                         value->kind = VAL_STACK_TOP;
@@ -4121,6 +4176,11 @@ void compile_code(Node * ast, int want_ptr)
         assert(0);
     }
     //printf("code len after token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
+}
+
+void compile_def_find_inplace_return(Node * ast, const FuncDef * funcdef, char ** found_name)
+{
+    
 }
 
 void compile_defs_compile(Node * ast)
@@ -4375,7 +4435,7 @@ void compile_globals_collect(Node * ast)
                     // move variable location into RAX
                     emit_mov_imm64(RAX, var->val->loc);
                     log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
-                    emit_mov_preg_reg_discard(RAX, RDX, val->val->type->size);
+                    emit_mov_into_offset_bothdiscard(RAX, RDX, 0, val->val->type->size);
                 }
                 else
                     assert(("TODO: assign composites in global initializers", 0));
