@@ -1,3 +1,4 @@
+#define KONORAN_BE_QUIET
 
 #ifndef _WIN32
 #ifndef _GNU_SOURCE
@@ -18,7 +19,7 @@
 //__attribute__((noinline))
 void print_float(double x)
 {
-    printf("%f\n", x);
+    printf("%g\n", x);
 }
 
 //__attribute__((noinline))
@@ -34,9 +35,78 @@ void print_bytes(uint8_t * bytes, uint64_t count)
 }
 
 //__attribute__((noinline))
-void print_fmt(char * cstring_bytes, char ** vars)
+void print_fmt(char * string, char ** vars)
 {
-    puts("TODO: implement print_fmt");
+    char state = ' '; // ' ' - normal, '%' - in format specifier
+    char c;
+    while ((c = *(string++)))
+    {
+        switch (state)
+        {
+        case ' ':
+        {
+            if (c == '%')
+                state = '%';
+            else
+                fputc(c, stdout);
+        } break;
+        case '%':
+        {
+            state = ' ';
+            if (*vars)
+            {
+                switch (c)
+                {
+                    case 'X':
+                        printf("%zX", *((uint64_t*)(*vars)));
+                        break;
+                    case 'x':
+                        printf("%zx", *((uint64_t*)(*vars)));
+                        break;
+                    case 'u':
+                        printf("%zu", *((uint64_t*)(*vars)));
+                        break;
+                    case 'i':
+                        printf("%zd", *((int64_t*)(*vars)));
+                        break;
+                    case 'F':
+                        printf("%g", *((double*)(*vars)));
+                        break;
+                    case 'f':
+                        printf("%g", *((float*)(*vars)));
+                        break;
+                    case 's':
+                        printf("%s", *vars);
+                        break;
+                    case 'c':
+                    {
+                        uint32_t mychar = *((uint64_t*)(*vars));
+                        assert(mychar <= 0x10FFFF); // encoding limit
+                        assert(mychar < 0xD800 || mychar > 0xDFFF); // surrogates
+                        if (mychar < 0x80 && mychar != 0)
+                            fputc(mychar, stdout);
+                        else if (mychar < 0x7FF) // overlong encoding of 0. modified utf-8.
+                        {
+                            fputc((mychar >> 6) | 0xC0, stdout);
+                            fputc((mychar & 0x3F) | 0x80, stdout);
+                        }
+                        else if (mychar < 0x7FF)
+                        {
+                            fputc((mychar >> 6) | 0xC0, stdout);
+                            fputc((mychar & 0x3F) | 0x80, stdout);
+                        }
+                    } break;
+                    default:
+                        fputc('%', stdout);
+                        fputc(c, stdout);
+                }
+                vars++;
+            }
+        } break;
+        default:
+            assert(0);
+        }
+    }
 }
 
 int main(int argc, char ** argv)

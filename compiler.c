@@ -3848,6 +3848,8 @@ void compile_code(Node * ast, int want_ptr)
                     assert(("unknown escape character", 0));
                 output_str[j++] = c2;
             }
+            else if (c == '"')
+                break;
             else
                 output_str[j++] = c;
         }

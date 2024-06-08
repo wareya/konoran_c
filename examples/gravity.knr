@@ -1,0 +1,31 @@
+
+void main()
+{
+    u64 i;
+    
+    f32 yvel;
+    f32 y;
+    f32 gravity;
+    f32 delta;
+    
+    i = 0u64;
+    yvel = 0.0f32;
+    y = 0.0f32;
+    delta = 0.0001f32;
+    gravity = 9.8f32;
+    
+head:
+    
+    yvel = yvel + delta*gravity*0.5f32;
+    y = y + yvel*delta;
+    yvel = yvel + delta*gravity*0.5f32;
+    
+    i = i + 1u64;
+    
+    if (i < 5000u64)
+        goto head;
+    
+    print_float((y) as f64);
+    
+    return;
+}
