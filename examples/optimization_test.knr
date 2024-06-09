@@ -22,6 +22,6 @@ export_extern void main()
 {
     //Vector3 zero = Vector3 { 0.0f64, 0.0f64, 0.0f64 };
     Vector3 zero = Vector3 { 0.0f64 };
-    vec3_sub_vec3(zero, vec3_mul_f64(zero, 0.0f64));
+    vec3_sub_vec3(zero, zero);
     return;
 }

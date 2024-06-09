@@ -1906,7 +1906,7 @@ void compile_unary_addrof(Node * ast)
         
         size_t size = guess_stack_size_from_size(type->size);
         emit_lea(RAX, RBP, -stack_loc);
-        emit_memcpy_static(RAX, RSP, type->size);
+        emit_memcpy_static_discard(RAX, RSP, type->size);
         emit_shrink_stack_safe(size);
         
         emit_push_safe_discard(RAX);
@@ -2111,7 +2111,7 @@ void compile_code(Node * ast, int want_ptr)
                 else if (val->kind == VAL_STACK_TOP)
                 {
                     size_t size = guess_stack_size_from_size(val->type->size);
-                    emit_memcpy_static_discard(RAX, RSP, val->type->size);
+                    emit_memcpy_static_bothdiscard(RAX, RSP, val->type->size);
                     emit_shrink_stack_safe(size);
                 }
                 else
@@ -2564,7 +2564,7 @@ void compile_code(Node * ast, int want_ptr)
                                 assert(("TODO store constant composite arg", 0));
                             else
                             {
-                                emit_memcpy_static(RAX, RSP, type->size);
+                                emit_memcpy_static_discard(RAX, RSP, type->size);
                                 emit_shrink_stack_safe(size);
                             }
                             arg_storage_used += size;
@@ -2791,9 +2791,9 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         uint64_t target_offset = struct_size_stack - inner_size_stack;
                         
-                        emit_lea(RDI, RSP, target_offset);
-                        // FIXME this is wrong!
-                        emit_memcpy_static_discard(RDI, RAX, inner_type->size);
+                        emit_lea(RDX, RSP, target_offset);
+                        // FIXME this is wrong! FIXME but how?
+                        emit_memcpy_static_bothdiscard(RDX, RAX, inner_type->size);
                         
                         emit_shrink_stack_safe(target_offset);
                         
@@ -2922,9 +2922,9 @@ void compile_code(Node * ast, int want_ptr)
                         // no overlap
                         else if (prop_end <= target_offset)
                         {
-                            emit_lea(RSI, RSP, prop_offset);
-                            emit_lea(RDI, RSP, target_offset);
-                            emit_memcpy_static_discard(RDI, RSI, prop_type->size);
+                            emit_lea(RAX, RSP, prop_offset);
+                            emit_lea(RDX, RSP, target_offset);
+                            emit_memcpy_static_bothdiscard(RDX, RAX, prop_type->size);
                             emit_shrink_stack_safe(target_offset);
                             stack_push_new_top(prop_type);
                         }
@@ -3257,25 +3257,24 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm64(RSI, loc);
+                    emit_mov_imm64(RDX, loc);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                 }
                 else
                 {
-                    emit_mov_imm64(RSI, expr->loc);
+                    emit_mov_imm64(RDX, expr->loc);
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
-                emit_lea(RDI, RBP, -var->val->loc);
-                
-                emit_memcpy_static(RDI, RSI, expr->type->size);
+                emit_lea(RAX, RBP, -var->val->loc);
+                emit_memcpy_static_bothdiscard(RAX, RDX, expr->type->size);
             }
             else
             {
                 assert(expr->kind == VAL_STACK_TOP);
                 size_t size = guess_stack_size_from_size(expr->type->size);
-                emit_lea(RDI, RBP, -var->val->loc);
-                emit_memcpy_static_discard(RDI, RSP, expr->type->size);
+                emit_lea(RAX, RBP, -var->val->loc);
+                emit_memcpy_static_bothdiscard(RAX, RSP, expr->type->size);
                 emit_shrink_stack_safe(size);
                 //assert(("TODO/FIXME: non-const aggregate fulldeclaration", 0));
             }
@@ -3366,7 +3365,7 @@ void compile_code(Node * ast, int want_ptr)
                 else
                     emit_pop_safe(RDX);
                 
-                emit_memcpy_static_discard(RDX, RSP, expr->type->size);
+                emit_memcpy_static_bothdiscard(RDX, RSP, expr->type->size);
                 
                 if (!simple_target)
                     emit_shrink_stack_safe(size + 8);
@@ -4054,7 +4053,7 @@ void compile_code(Node * ast, int want_ptr)
                             
                             if (val->val->type->is_volatile)
                                 emitter_log_flush();
-                            emit_memcpy_static_discard(RSP, RSI, new_type->size);
+                            emit_memcpy_static_bothdiscard(RSP, RSI, new_type->size);
                             if (val->val->type->is_volatile)
                                 emitter_log_flush();
                             
@@ -4342,21 +4341,21 @@ void compile_defs_compile(Node * ast)
                         emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
                     else
                     {
-                        emit_lea(RDI, RBP, -var->val->loc);
+                        emit_lea(RAX, RBP, -var->val->loc);
                         if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
                         {
                             int b = -1;
                             if (where == RDI)
-                                emit_mov_offset(RSI, RBP, (b++)*8, 8);
+                                emit_mov_offset(R10, RBP, (b++)*8, 8);
                             else if (where == RSI)
-                                emit_mov_offset(RSI, RBP, (b++)*8, 8);
+                                emit_mov_offset(R10, RBP, (b++)*8, 8);
                             else if (where == RCX)
-                                emit_mov_offset(RSI, RBP, (b++)*8, 8);
+                                emit_mov_offset(R10, RBP, (b++)*8, 8);
                             
-                            emit_memcpy_static_discard(RDI, RSI, var->val->type->size);
+                            emit_memcpy_static_bothdiscard(RAX, R10, var->val->type->size);
                         }
                         else
-                            emit_memcpy_static_discard(RDI, where, var->val->type->size);
+                            emit_memcpy_static_bothdiscard(RAX, where, var->val->type->size);
                     }
                 }
                 else
@@ -4374,9 +4373,9 @@ void compile_defs_compile(Node * ast)
                 }
                 else
                 {
-                    emit_mov_offset(RSI, RBP, -where, 8);
-                    emit_lea(RDI, RBP, -var->val->loc);
-                    emit_memcpy_static_discard(RDI, RSI, var->val->type->size);
+                    emit_mov_offset(R10, RBP, -where, 8);
+                    emit_lea(RAX, RBP, -var->val->loc);
+                    emit_memcpy_static_bothdiscard(RAX, R10, var->val->type->size);
                 }
             }
             

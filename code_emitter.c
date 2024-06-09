@@ -2297,10 +2297,16 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
         i += 1;
     }
 }
+
 void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, uint64_t offset_d, uint64_t offset_s, size_t count)
 {
     _impl_emit_memcpy_static(reg_d, reg_s, offset_d, offset_s, count);
 }
+void _impl_emit_memcpy_static_bothdiscard(int reg_d, int reg_s, uint64_t offset_d, uint64_t offset_s, size_t count)
+{
+    _impl_emit_memcpy_static(reg_d, reg_s, offset_d, offset_s, count);
+}
+
 void _inner_emit_memcpy_static(int reg_d, int reg_s, size_t count, uint8_t discard)
 {
     // emit pure MOVs if copy is small and simply-sized. doing this so early helps the optimizer avoid single-register thrashing.
@@ -2318,10 +2324,12 @@ void _inner_emit_memcpy_static(int reg_d, int reg_s, size_t count, uint8_t disca
     }
     else
     {
-        if (discard)
-            emitter_log_add_5(_impl_emit_memcpy_static_discard, reg_d, reg_s, 0, 0, count);
+        if (discard == 2)
+            emitter_log_add_5(_impl_emit_memcpy_static_bothdiscard, reg_d, reg_s, 0, 0, count);
+        else if (discard == 1)
+            emitter_log_add_5(_impl_emit_memcpy_static_discard    , reg_d, reg_s, 0, 0, count);
         else
-            emitter_log_add_5(_impl_emit_memcpy_static        , reg_d, reg_s, 0, 0, count);
+            emitter_log_add_5(_impl_emit_memcpy_static            , reg_d, reg_s, 0, 0, count);
     }
 }
 // memcpy. may clobber RCX, RSI, RDI, XMM4, and flags.
@@ -2333,6 +2341,11 @@ void emit_memcpy_static(int reg_d, int reg_s, size_t count)
 void emit_memcpy_static_discard(int reg_d, int reg_s, size_t count)
 {
     _inner_emit_memcpy_static(reg_d, reg_s, count, 1);
+}
+// aligned memcpy, but the source memory is not going to be used afterwards, and the source register is not going to be used to access the source memory afterwards
+void emit_memcpy_static_bothdiscard(int reg_d, int reg_s, size_t count)
+{
+    _inner_emit_memcpy_static(reg_d, reg_s, count, 2);
 }
 
 void _impl_emit_call(int reg)
@@ -2620,6 +2633,9 @@ void emitter_log_apply(EmitterLog * log)
     
     else if (log->funcptr == (void *)_impl_emit_memcpy_static_discard)
         _impl_emit_memcpy_static_discard(log->args[0], log->args[1], log->args[2], log->args[3], log->args[4]);
+    
+    else if (log->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard)
+        _impl_emit_memcpy_static_bothdiscard(log->args[0], log->args[1], log->args[2], log->args[3], log->args[4]);
     
     /*
     else if (log->funcptr == (void *)_impl_emit_memcpy_dynamic)
@@ -2951,6 +2967,7 @@ uint8_t emitter_log_try_optimize(void)
         // swap for more effective optimization
         if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
              || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
+             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
             ) &&
             (   log_next->funcptr == (void *)_impl_emit_mov
              || log_next->funcptr == (void *)_impl_emit_mov_discard
@@ -2980,15 +2997,19 @@ uint8_t emitter_log_try_optimize(void)
         // redundant memcpys
         if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
              || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
+             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
             ) &&
             (   log_next->funcptr == (void *)_impl_emit_memcpy_static_discard
+             || log_next->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
             ) &&
-            log_prev->args[0] == log_next->args[1]
+            log_prev->args[0] == log_next->args[1] &&
+            log_prev->args[2] == log_next->args[3]
             )
         {
             EmitterLog * memcpy_2nd = emitter_log_erase_nth(0);
             EmitterLog * memcpy_1st = emitter_log_erase_nth(0);
             memcpy_2nd->args[1] = memcpy_1st->args[1];
+            memcpy_2nd->args[3] = memcpy_1st->args[3];
             emitter_log_add(memcpy_2nd);
             return 1;
         }
@@ -3064,7 +3085,9 @@ uint8_t emitter_log_try_optimize(void)
         // lea       rsi,[rbp-0x40]
         // memcpy    rdi, rsi, a, b, n
         if (log_prev->funcptr == (void *)_impl_emit_lea &&
-            log_next->funcptr == (void *)_impl_emit_memcpy_static_discard &&
+            (   log_next->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
+             || log_next->funcptr == (void *)_impl_emit_memcpy_static_discard
+            ) &&
             log_prev->args[0] == log_next->args[1])
         {
             EmitterLog * memcpy = emitter_log_erase_nth(0);
@@ -3079,15 +3102,20 @@ uint8_t emitter_log_try_optimize(void)
         // lea       rdi,[rbp-0x40]
         // memcpy    rdi, rsi, a, b, n
         if (log_prev->funcptr == (void *)_impl_emit_lea &&
-            log_next->funcptr == (void *)_impl_emit_memcpy_static_discard &&
-            log_prev->args[0] == log_next->args[0])
+            (   log_next->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
+             || log_next->funcptr == (void *)_impl_emit_memcpy_static_discard
+            ) &&
+            log_prev->args[0] == log_next->args[0]
+            )
         {
             EmitterLog * memcpy = emitter_log_erase_nth(0);
             EmitterLog * lea = emitter_log_erase_nth(0);
             memcpy->args[0] = lea->args[1];
             memcpy->args[2] += lea->args[2];
-            printf("-- ~-`12- -` combining %zd and %zd\n", memcpy->args[2], lea->args[2]);
+            if (log_next->funcptr == (void *)_impl_emit_memcpy_static_discard)
+                emitter_log_add(lea);
             emitter_log_add(memcpy);
+            
             return 1;
         }
         
@@ -3115,6 +3143,8 @@ uint8_t emitter_log_try_optimize(void)
                 emitter_log_add(push);
             }
         }
+        
+        
         
         // rsp manipulation directly followed by leave
         if ((log_prev->funcptr == (void *)_impl_emit_add_imm ||
