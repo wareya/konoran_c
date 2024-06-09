@@ -2457,6 +2457,10 @@ void compile_code(Node * ast, int want_ptr)
                         arg_stack_size = -return_where;
                 }
                 
+                
+                uint8_t do_arg_var_opt = 1;
+                
+                
                 GenericList * argwheres = 0;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
                 while (arg)
@@ -2466,7 +2470,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     if (type_is_composite(type))
                     {
-                        if (arg_node->type != RVAR_NAME)
+                        if (arg_node->type != RVAR_NAME || !do_arg_var_opt)
                             arg_storage_size += guess_stack_size_from_size(type->size);
                     }
                     
@@ -2504,7 +2508,7 @@ void compile_code(Node * ast, int want_ptr)
                     Type * type = arg->item;
                     
                     Value * arg_expr = 0;
-                    if (!type_is_composite(type) || arg_node->type != RVAR_NAME)
+                    if (!type_is_composite(type) || arg_node->type != RVAR_NAME || !do_arg_var_opt)
                     {
                         compile_code(arg_node, 0);
                         StackItem * item = stack_pop();
@@ -2515,7 +2519,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     if (type_is_composite(type))
                     {
-                        if (arg_node->type == RVAR_NAME)
+                        if (arg_node->type == RVAR_NAME && do_arg_var_opt)
                         {
                             Variable * var = get_local(arg_node->text, arg_node->textlen);
                             if (!var)
@@ -2554,7 +2558,7 @@ void compile_code(Node * ast, int want_ptr)
                             size_t size = guess_stack_size_from_size(type->size);
                             
                             ////// this here
-                            emit_lea(RAX, RSP, temp_used + arg_stack_size + arg_storage_used);
+                            emit_lea(RAX, RSP, temp_used + arg_stack_size + arg_storage_used + size);
                             
                             if (arg_expr->kind == VAL_CONSTANT)
                                 assert(("TODO store constant composite arg", 0));

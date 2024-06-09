@@ -450,8 +450,10 @@ void emit_nop(size_t len)
 void _impl_emit_label(char * label, size_t num)
 {
     // align in a way that's good for instruction decoding
-    if (code->len % 16 > 12)
-        _impl_emit_nop(16 - (code->len % 16));
+    size_t alignment = 16;
+    if (code->len % alignment > (alignment - 4))
+        _impl_emit_nop(alignment - (code->len % alignment));
+    
     last_is_terminator = 0;
     log_label(label, num, code->len);
 }
@@ -2055,6 +2057,8 @@ void emit_breakpoint(void)
 }
 void _impl_emit_lea(int reg_d, int reg_s, int64_t offset)
 {
+    if (reg_s == RSP)
+        printf("`-`-1 2-`3 _~# @-`04 2 5#@~   lea RSP source offset: 0x%zX\n", offset);
     last_is_terminator = 0;
     _emit_mov_offsetlike(reg_d, reg_s, offset, 8,
         0xFF, // invalid
@@ -2069,6 +2073,9 @@ void emit_lea(int reg_d, int reg_s, int64_t offset)
 // non-register-clobbering LEA -> PUSH
 void _impl_emit_lea_fused_push(int reg_s, int64_t offset)
 {
+    if (reg_s == RSP)
+        printf("`-`-1 2-`3 _~# @-`04 2 5#@~   fused lea RSP source offset: 0x%zX\n", offset);
+    
     last_is_terminator = 0;
     assert(offset >= -2147483647 && offset <= 2147483647);
     assert(reg_s <= R15);
@@ -2199,10 +2206,21 @@ void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset)
     assert(reg_d >= XMM0 && reg_d <= XMM7);
     assert(reg_s <= R15);
     
-    if (reg_s >= R8)
-        byte_push(code, 0x41);
-    byte_push(code, 0x0F);
-    byte_push(code, 0x10);
+    if (0) // movdqu
+    {
+        byte_push(code, 0xF3);
+        if (reg_s >= R8)
+            byte_push(code, 0x41);
+        byte_push(code, 0x0F);
+        byte_push(code, 0x6F);
+    }
+    else // movups
+    {
+        if (reg_s >= R8)
+            byte_push(code, 0x41);
+        byte_push(code, 0x0F);
+        byte_push(code, 0x10);
+    }
     
     reg_d &= 7;
     reg_s &= 7;
@@ -2221,10 +2239,21 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
     assert(reg_d <= R15);
     assert(reg_s >= XMM0 && reg_s <= XMM7);
     
-    if (reg_d >= R8)
-        byte_push(code, 0x41);
-    byte_push(code, 0x0F);
-    byte_push(code, 0x11);
+    if (0) // movdqu
+    {
+        byte_push(code, 0xF3);
+        if (reg_d >= R8)
+            byte_push(code, 0x41);
+        byte_push(code, 0x0F);
+        byte_push(code, 0x7F);
+    }
+    else // movups
+    {
+        if (reg_d >= R8)
+            byte_push(code, 0x41);
+        byte_push(code, 0x0F);
+        byte_push(code, 0x11);
+    }
     
     reg_d &= 7;
     reg_s &= 7;
@@ -2232,7 +2261,7 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
     _emit_addrblock(reg_s, reg_d, offset);
 }
 
-
+// TODO add offset variants
 void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, int chunk_size, int direction_is_down)
 {
     assert(("downwards aligned memcpy not supported yet", !direction_is_down));
@@ -2255,9 +2284,8 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, i
     }
     
     size_t i = 0;
-    /*
     // slower for mystery reasons
-    if (total >= 24)
+    if (total >= 32)
     {
         size_t fast_part = total - (total % 16);
         for (i = 0; i + 16 <= fast_part; i += 16)
@@ -2265,15 +2293,14 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, i
             _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i);
             _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i);
         }
-        if (total > 16 && total != fast_part)
+        if ((total - i) >= 8)
         {
-            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, total - 16);
-            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, total - 16);
-            return;
+            _impl_emit_mov_offset_discard     (RCX, reg_s, i, 8);
+            _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 8);
+            i += 8;
         }
     }
     else
-    */
     if (total >= 8)
     {
         size_t fast_part = total - (total % 8);
@@ -2282,18 +2309,14 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, i
             _impl_emit_mov_offset     (RCX, reg_s, i, 8);
             _impl_emit_mov_into_offset(reg_d, RCX, i, 8);
         }
-        if (total > 8 && total != fast_part)
+        /*
+        if (total > 8 && total != i)
         {
             _impl_emit_mov_offset     (RCX, reg_s, total - 8, 8);
             _impl_emit_mov_into_offset(reg_d, RCX, total - 8, 8);
             return;
         }
-    }
-    if ((total - i) >= 8)
-    {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i, 8);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 8);
-        i += 8;
+        */
     }
     if ((total - i) >= 4)
     {

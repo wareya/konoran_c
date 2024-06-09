@@ -10,6 +10,7 @@ struct Vector3 {
     f64 x;
     f64 y;
     f64 z;
+    array(f64, 2) _;
 }
 
 Vector3 vec3_mul_f64(Vector3 a, f64 b)

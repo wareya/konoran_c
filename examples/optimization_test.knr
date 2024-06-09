@@ -1,14 +1,27 @@
 
 struct Vector3 {
     f64 x;
-    f64 y;
-    f64 z;
+    //f64 y;
+    //f64 z;
+    //array(f64, 2) _;
+    array(f64, 4) _;
 }
+
 Vector3 vec3_mul_f64(Vector3 a, f64 b)
 {
     a.x = a.x * b;
-    a.y = a.y * b;
-    a.z = a.z * b;
+    //a.y = a.y * b;
+    //a.z = a.z * b;
     return a;
 }
-void main(){return;}
+void vec3_sub_vec3(Vector3 a, Vector3 b)
+{
+    return;
+}
+export_extern void main()
+{
+    //Vector3 zero = Vector3 { 0.0f64, 0.0f64, 0.0f64 };
+    Vector3 zero = Vector3 { 0.0f64 };
+    vec3_sub_vec3(zero, vec3_mul_f64(zero, 0.0f64));
+    return;
+}
