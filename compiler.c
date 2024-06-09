@@ -2895,7 +2895,7 @@ void compile_code(Node * ast, int want_ptr)
                     if (prop_offset != 0)
                     {
                         emit_pop_safe(RAX);
-                        emit_add_imm(RAX, prop_offset);
+                        emit_add_imm_discard(RAX, prop_offset);
                         emit_push_safe_discard(RAX);
                     }
                     
@@ -2960,7 +2960,7 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         // on heap, expand stack and memcpy onto stack
                         emit_pop_safe(RSI);
-                        emit_add_imm(RSI, prop_offset);
+                        emit_add_imm_discard(RSI, prop_offset);
                         
                         emit_expand_stack_safe(prop_size_stack);
                         emit_memcpy_static(RSP, RSI, prop_type->size);
