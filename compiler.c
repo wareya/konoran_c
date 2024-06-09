@@ -1906,7 +1906,7 @@ void compile_unary_addrof(Node * ast)
         
         size_t size = guess_stack_size_from_size(type->size);
         emit_lea(RAX, RBP, -stack_loc);
-        emit_memcpy_static_discard(RAX, RSP, type->size);
+        emit_memcpy_static(RAX, RSP, type->size);
         emit_shrink_stack_safe(size);
         
         emit_push_safe_discard(RAX);
@@ -2564,7 +2564,7 @@ void compile_code(Node * ast, int want_ptr)
                                 assert(("TODO store constant composite arg", 0));
                             else
                             {
-                                emit_memcpy_static_discard(RAX, RSP, type->size);
+                                emit_memcpy_static(RAX, RSP, type->size);
                                 emit_shrink_stack_safe(size);
                             }
                             arg_storage_used += size;
@@ -3366,7 +3366,6 @@ void compile_code(Node * ast, int want_ptr)
                 else
                     emit_pop_safe(RDX);
                 
-                emit_memcpy_static_discard(RDX, RSP, expr->type->size);
                 emit_memcpy_static_discard(RDX, RSP, expr->type->size);
                 
                 if (!simple_target)

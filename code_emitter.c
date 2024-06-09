@@ -1551,6 +1551,8 @@ void emit_mov_offset_from_xmm_discard(int reg_d, int reg_s, int64_t offset, size
 
 void _emit_addrblock(int reg_d, int reg_s, int64_t offset)
 {
+    printf("%zX\n", offset);
+    printf("%zd\n", offset);
     assert(offset >= -2147483648 && offset <= 2147483647);
     
     uint8_t offset_flag = 0;
@@ -2232,13 +2234,11 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
 }
 
 // TODO add offset variants
-void _impl_emit_memcpy_static(int reg_d, int reg_s, uint32_t offset_d, uint32_t offset_s, size_t count)
+void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t offset_s, size_t count)
 {
     assert(reg_d <= R15 && reg_s <= R15);
     
     size_t total = count;
-    
-    //printf("---1-1`-`-`_~_`1--`1- emitting memcpy with size %zu\n", total);
     
     if (reg_s == RCX)
     {
@@ -2258,13 +2258,13 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint32_t offset_d, uint32_t 
         size_t fast_part = total - (total % 16);
         for (i = 0; i + 16 <= fast_part; i += 16)
         {
-            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i);
-            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i);
+            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i + offset_s);
+            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i + offset_d);
         }
         if ((total - i) >= 8)
         {
-            _impl_emit_mov_offset_discard     (RCX, reg_s, i, 8);
-            _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 8);
+            _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 8);
+            _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 8);
             i += 8;
         }
     }
@@ -2274,30 +2274,30 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint32_t offset_d, uint32_t 
         size_t fast_part = total - (total % 8);
         for (i = 0; i + 8 <= fast_part; i += 8)
         {
-            _impl_emit_mov_offset     (RCX, reg_s, i, 8);
-            _impl_emit_mov_into_offset(reg_d, RCX, i, 8);
+            _impl_emit_mov_offset     (RCX, reg_s, i + offset_s, 8);
+            _impl_emit_mov_into_offset(reg_d, RCX, i + offset_d, 8);
         }
     }
     if ((total - i) >= 4)
     {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i, 4);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 4);
+        _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 4);
+        _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 4);
         i += 4;
     }
     if ((total - i) >= 2)
     {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i, 2);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 2);
+        _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 2);
+        _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 2);
         i += 2;
     }
     if ((total - i) >= 1)
     {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i, 1);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i, 1);
+        _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 1);
+        _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 1);
         i += 1;
     }
 }
-void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, uint32_t offset_d, uint32_t offset_s, size_t count)
+void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, uint64_t offset_d, uint64_t offset_s, size_t count)
 {
     _impl_emit_memcpy_static(reg_d, reg_s, offset_d, offset_s, count);
 }
@@ -3058,6 +3058,40 @@ uint8_t emitter_log_try_optimize(void)
             emitter_log_add(mov);
             return 1;
         }
+        
+        
+        
+        // lea       rsi,[rbp-0x40]
+        // memcpy    rdi, rsi, a, b, n
+        if (log_prev->funcptr == (void *)_impl_emit_lea &&
+            log_next->funcptr == (void *)_impl_emit_memcpy_static_discard &&
+            log_prev->args[0] == log_next->args[1])
+        {
+            EmitterLog * memcpy = emitter_log_erase_nth(0);
+            EmitterLog * lea = emitter_log_erase_nth(0);
+            memcpy->args[1] = lea->args[1];
+            memcpy->args[3] += lea->args[2];
+            printf("-- ~-`12- -` combining %zd and %zd\n", memcpy->args[3], lea->args[2]);
+            emitter_log_add(memcpy);
+            return 1;
+        }
+        
+        // lea       rdi,[rbp-0x40]
+        // memcpy    rdi, rsi, a, b, n
+        if (log_prev->funcptr == (void *)_impl_emit_lea &&
+            log_next->funcptr == (void *)_impl_emit_memcpy_static_discard &&
+            log_prev->args[0] == log_next->args[0])
+        {
+            EmitterLog * memcpy = emitter_log_erase_nth(0);
+            EmitterLog * lea = emitter_log_erase_nth(0);
+            memcpy->args[0] = lea->args[1];
+            memcpy->args[2] += lea->args[2];
+            printf("-- ~-`12- -` combining %zd and %zd\n", memcpy->args[2], lea->args[2]);
+            emitter_log_add(memcpy);
+            return 1;
+        }
+        
+        
         
         // mov-offset into a push
         if ((log_prev->funcptr == (void *)_impl_emit_mov_offset || log_prev->funcptr == (void *)_impl_emit_mov_offset_discard) &&
