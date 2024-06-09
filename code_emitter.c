@@ -2232,7 +2232,7 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
 }
 
 // TODO add offset variants
-void _impl_emit_memcpy_static(int reg_d, int reg_s, size_t count)
+void _impl_emit_memcpy_static(int reg_d, int reg_s, uint32_t offset_d, uint32_t offset_s, size_t count)
 {
     assert(reg_d <= R15 && reg_s <= R15);
     
@@ -2297,16 +2297,16 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, size_t count)
         i += 1;
     }
 }
-void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, size_t count)
+void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, uint32_t offset_d, uint32_t offset_s, size_t count)
 {
-    _impl_emit_memcpy_static(reg_d, reg_s, count);
+    _impl_emit_memcpy_static(reg_d, reg_s, offset_d, offset_s, count);
 }
 void _inner_emit_memcpy_static(int reg_d, int reg_s, size_t count, uint8_t discard)
 {
     // emit pure MOVs if copy is small and simply-sized. doing this so early helps the optimizer avoid single-register thrashing.
     if (count == 8 || count == 4 || count == 2 || count == 1)
     {
-        emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, count);
+            emitter_log_add_4(_impl_emit_mov_offset             , RCX, reg_s, 0, count);
         if (discard)
             emitter_log_add_4(_impl_emit_mov_into_offset_discard, reg_d, RCX, 0, count);
         else
@@ -2319,9 +2319,9 @@ void _inner_emit_memcpy_static(int reg_d, int reg_s, size_t count, uint8_t disca
     else
     {
         if (discard)
-            emitter_log_add_3(_impl_emit_memcpy_static_discard, reg_d, reg_s, count);
+            emitter_log_add_5(_impl_emit_memcpy_static_discard, reg_d, reg_s, 0, 0, count);
         else
-            emitter_log_add_3(_impl_emit_memcpy_static        , reg_d, reg_s, count);
+            emitter_log_add_5(_impl_emit_memcpy_static        , reg_d, reg_s, 0, 0, count);
     }
 }
 // memcpy. may clobber RCX, RSI, RDI, XMM4, and flags.
@@ -2616,10 +2616,10 @@ void emitter_log_apply(EmitterLog * log)
         _impl_emit_memcpy_slow(log->args[0]);
     
     else if (log->funcptr == (void *)_impl_emit_memcpy_static)
-        _impl_emit_memcpy_static(log->args[0], log->args[1], log->args[2]);
+        _impl_emit_memcpy_static(log->args[0], log->args[1], log->args[2], log->args[3], log->args[4]);
     
     else if (log->funcptr == (void *)_impl_emit_memcpy_static_discard)
-        _impl_emit_memcpy_static_discard(log->args[0], log->args[1], log->args[2]);
+        _impl_emit_memcpy_static_discard(log->args[0], log->args[1], log->args[2], log->args[3], log->args[4]);
     
     /*
     else if (log->funcptr == (void *)_impl_emit_memcpy_dynamic)
