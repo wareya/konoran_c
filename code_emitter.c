@@ -2284,8 +2284,8 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, i
     }
     
     size_t i = 0;
-    // slower for mystery reasons
-    if (total >= 32)
+    // slower for small moves for mysterious reasons, at least on my CPU
+    if (total >= 80)
     {
         size_t fast_part = total - (total % 16);
         for (i = 0; i + 16 <= fast_part; i += 16)
@@ -2309,14 +2309,6 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, i
             _impl_emit_mov_offset     (RCX, reg_s, i, 8);
             _impl_emit_mov_into_offset(reg_d, RCX, i, 8);
         }
-        /*
-        if (total > 8 && total != i)
-        {
-            _impl_emit_mov_offset     (RCX, reg_s, total - 8, 8);
-            _impl_emit_mov_into_offset(reg_d, RCX, total - 8, 8);
-            return;
-        }
-        */
     }
     if ((total - i) >= 4)
     {
