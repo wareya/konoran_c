@@ -2232,7 +2232,7 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
 }
 
 // TODO add offset variants
-void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count)
+void _impl_emit_memcpy_static(int reg_d, int reg_s, size_t count)
 {
     assert(reg_d <= R15 && reg_s <= R15);
     
@@ -2297,11 +2297,11 @@ void _impl_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count)
         i += 1;
     }
 }
-void _impl_emit_memcpy_static_aligned_to_8_discard(int reg_d, int reg_s, size_t count)
+void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, size_t count)
 {
-    _impl_emit_memcpy_static_aligned_to_8(reg_d, reg_s, count);
+    _impl_emit_memcpy_static(reg_d, reg_s, count);
 }
-void _inner_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, uint8_t discard)
+void _inner_emit_memcpy_static(int reg_d, int reg_s, size_t count, uint8_t discard)
 {
     // emit pure MOVs if copy is small and simply-sized. doing this so early helps the optimizer avoid single-register thrashing.
     if (count == 8 || count == 4 || count == 2 || count == 1)
@@ -2319,20 +2319,20 @@ void _inner_emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count, 
     else
     {
         if (discard)
-            emitter_log_add_3(_impl_emit_memcpy_static_aligned_to_8_discard, reg_d, reg_s, count);
+            emitter_log_add_3(_impl_emit_memcpy_static_discard, reg_d, reg_s, count);
         else
-            emitter_log_add_3(_impl_emit_memcpy_static_aligned_to_8        , reg_d, reg_s, count);
+            emitter_log_add_3(_impl_emit_memcpy_static        , reg_d, reg_s, count);
     }
 }
 // memcpy. may clobber RCX, RSI, RDI, XMM4, and flags.
-void emit_memcpy_static_aligned_to_8(int reg_d, int reg_s, size_t count)
+void emit_memcpy_static(int reg_d, int reg_s, size_t count)
 {
-    _inner_emit_memcpy_static_aligned_to_8(reg_d, reg_s, count, 0);
+    _inner_emit_memcpy_static(reg_d, reg_s, count, 0);
 }
 // aligned memcpy, but the source memory is not going to be used afterwards, and the source register is not going to be used to access the source memory afterwards
-void emit_memcpy_static_aligned_to_8_discard(int reg_d, int reg_s, size_t count)
+void emit_memcpy_static_discard(int reg_d, int reg_s, size_t count)
 {
-    _inner_emit_memcpy_static_aligned_to_8(reg_d, reg_s, count, 1);
+    _inner_emit_memcpy_static(reg_d, reg_s, count, 1);
 }
 
 void _impl_emit_call(int reg)
@@ -2615,11 +2615,11 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_memcpy_slow)
         _impl_emit_memcpy_slow(log->args[0]);
     
-    else if (log->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8)
-        _impl_emit_memcpy_static_aligned_to_8(log->args[0], log->args[1], log->args[2]);
+    else if (log->funcptr == (void *)_impl_emit_memcpy_static)
+        _impl_emit_memcpy_static(log->args[0], log->args[1], log->args[2]);
     
-    else if (log->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard)
-        _impl_emit_memcpy_static_aligned_to_8_discard(log->args[0], log->args[1], log->args[2]);
+    else if (log->funcptr == (void *)_impl_emit_memcpy_static_discard)
+        _impl_emit_memcpy_static_discard(log->args[0], log->args[1], log->args[2]);
     
     /*
     else if (log->funcptr == (void *)_impl_emit_memcpy_dynamic)
@@ -2949,8 +2949,8 @@ uint8_t emitter_log_try_optimize(void)
         }
         
         // swap for more effective optimization
-        if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8
-             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard
+        if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
+             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
             ) &&
             (   log_next->funcptr == (void *)_impl_emit_mov
              || log_next->funcptr == (void *)_impl_emit_mov_discard
@@ -2978,10 +2978,10 @@ uint8_t emitter_log_try_optimize(void)
         }
         
         // redundant memcpys
-        if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8
-             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard
+        if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
+             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
             ) &&
-            (   log_next->funcptr == (void *)_impl_emit_memcpy_static_aligned_to_8_discard
+            (   log_next->funcptr == (void *)_impl_emit_memcpy_static_discard
             ) &&
             log_prev->args[0] == log_next->args[1]
             )

@@ -1906,7 +1906,7 @@ void compile_unary_addrof(Node * ast)
         
         size_t size = guess_stack_size_from_size(type->size);
         emit_lea(RAX, RBP, -stack_loc);
-        emit_memcpy_static_aligned_to_8_discard(RAX, RSP, type->size);
+        emit_memcpy_static_discard(RAX, RSP, type->size);
         emit_shrink_stack_safe(size);
         
         emit_push_safe_discard(RAX);
@@ -2111,7 +2111,7 @@ void compile_code(Node * ast, int want_ptr)
                 else if (val->kind == VAL_STACK_TOP)
                 {
                     size_t size = guess_stack_size_from_size(val->type->size);
-                    emit_memcpy_static_aligned_to_8_discard(RAX, RSP, val->type->size);
+                    emit_memcpy_static_discard(RAX, RSP, val->type->size);
                     emit_shrink_stack_safe(size);
                 }
                 else
@@ -2307,7 +2307,7 @@ void compile_code(Node * ast, int want_ptr)
                     size_t size = guess_stack_size_from_size(type->size);
                     emit_expand_stack_safe(size);
                     emit_lea(RSI, RBP, -var->val->loc);
-                    emit_memcpy_static_aligned_to_8(RSP, RSI, type->size);
+                    emit_memcpy_static(RSP, RSI, type->size);
                 }
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -2564,7 +2564,7 @@ void compile_code(Node * ast, int want_ptr)
                                 assert(("TODO store constant composite arg", 0));
                             else
                             {
-                                emit_memcpy_static_aligned_to_8_discard(RAX, RSP, type->size);
+                                emit_memcpy_static_discard(RAX, RSP, type->size);
                                 emit_shrink_stack_safe(size);
                             }
                             arg_storage_used += size;
@@ -2793,7 +2793,7 @@ void compile_code(Node * ast, int want_ptr)
                         
                         emit_lea(RDI, RSP, target_offset);
                         // FIXME this is wrong!
-                        emit_memcpy_static_aligned_to_8_discard(RDI, RAX, inner_type->size);
+                        emit_memcpy_static_discard(RDI, RAX, inner_type->size);
                         
                         emit_shrink_stack_safe(target_offset);
                         
@@ -2806,7 +2806,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_add(RSI, RAX, 8);
                         emit_expand_stack_safe(inner_size_stack);
                         
-                        emit_memcpy_static_aligned_to_8(RSP, RSI, inner_type->size);
+                        emit_memcpy_static(RSP, RSI, inner_type->size);
                         
                         stack_push_new_top(inner_type);
                     }
@@ -2924,7 +2924,7 @@ void compile_code(Node * ast, int want_ptr)
                         {
                             emit_lea(RSI, RSP, prop_offset);
                             emit_lea(RDI, RSP, target_offset);
-                            emit_memcpy_static_aligned_to_8_discard(RDI, RSI, prop_type->size);
+                            emit_memcpy_static_discard(RDI, RSI, prop_type->size);
                             emit_shrink_stack_safe(target_offset);
                             stack_push_new_top(prop_type);
                         }
@@ -2941,7 +2941,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_add_imm(RSI, prop_offset);
                         
                         emit_expand_stack_safe(prop_size_stack);
-                        emit_memcpy_static_aligned_to_8(RSP, RSI, prop_type->size);
+                        emit_memcpy_static(RSP, RSI, prop_type->size);
                         
                         stack_push_new_top(prop_type);
                     }
@@ -3014,7 +3014,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_imm64(RSI, loc);
                 log_static_relocation(emitter_get_code_len() - 8, loc);
                 
-                emit_memcpy_static_aligned_to_8(RSP, RSI, array_type->inner_type->size);
+                emit_memcpy_static(RSP, RSI, array_type->inner_type->size);
             }
         }
         
@@ -3045,7 +3045,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     emit_lea(RDI, RSP, inner_size * i);
                     
-                    emit_memcpy_static_aligned_to_8(RDI, RSI, array_type->inner_type->size);
+                    emit_memcpy_static(RDI, RSI, array_type->inner_type->size);
                 }
             }
             else
@@ -3268,14 +3268,14 @@ void compile_code(Node * ast, int want_ptr)
                 
                 emit_lea(RDI, RBP, -var->val->loc);
                 
-                emit_memcpy_static_aligned_to_8(RDI, RSI, expr->type->size);
+                emit_memcpy_static(RDI, RSI, expr->type->size);
             }
             else
             {
                 assert(expr->kind == VAL_STACK_TOP);
                 size_t size = guess_stack_size_from_size(expr->type->size);
                 emit_lea(RDI, RBP, -var->val->loc);
-                emit_memcpy_static_aligned_to_8_discard(RDI, RSP, expr->type->size);
+                emit_memcpy_static_discard(RDI, RSP, expr->type->size);
                 emit_shrink_stack_safe(size);
                 //assert(("TODO/FIXME: non-const aggregate fulldeclaration", 0));
             }
@@ -3345,7 +3345,7 @@ void compile_code(Node * ast, int want_ptr)
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
-                emit_memcpy_static_aligned_to_8(RDI, RSI, expr->type->size);
+                emit_memcpy_static(RDI, RSI, expr->type->size);
             }
             else
             {
@@ -3366,8 +3366,8 @@ void compile_code(Node * ast, int want_ptr)
                 else
                     emit_pop_safe(RDX);
                 
-                emit_memcpy_static_aligned_to_8_discard(RDX, RSP, expr->type->size);
-                emit_memcpy_static_aligned_to_8_discard(RDX, RSP, expr->type->size);
+                emit_memcpy_static_discard(RDX, RSP, expr->type->size);
+                emit_memcpy_static_discard(RDX, RSP, expr->type->size);
                 
                 if (!simple_target)
                     emit_shrink_stack_safe(size + 8);
@@ -4055,7 +4055,7 @@ void compile_code(Node * ast, int want_ptr)
                             
                             if (val->val->type->is_volatile)
                                 emitter_log_flush();
-                            emit_memcpy_static_aligned_to_8_discard(RSP, RSI, new_type->size);
+                            emit_memcpy_static_discard(RSP, RSI, new_type->size);
                             if (val->val->type->is_volatile)
                                 emitter_log_flush();
                             
@@ -4354,10 +4354,10 @@ void compile_defs_compile(Node * ast)
                             else if (where == RCX)
                                 emit_mov_offset(RSI, RBP, (b++)*8, 8);
                             
-                            emit_memcpy_static_aligned_to_8_discard(RDI, RSI, var->val->type->size);
+                            emit_memcpy_static_discard(RDI, RSI, var->val->type->size);
                         }
                         else
-                            emit_memcpy_static_aligned_to_8_discard(RDI, where, var->val->type->size);
+                            emit_memcpy_static_discard(RDI, where, var->val->type->size);
                     }
                 }
                 else
@@ -4377,7 +4377,7 @@ void compile_defs_compile(Node * ast)
                 {
                     emit_mov_offset(RSI, RBP, -where, 8);
                     emit_lea(RDI, RBP, -var->val->loc);
-                    emit_memcpy_static_aligned_to_8_discard(RDI, RSI, var->val->type->size);
+                    emit_memcpy_static_discard(RDI, RSI, var->val->type->size);
                 }
             }
             
