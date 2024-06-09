@@ -22,7 +22,7 @@ uint8_t is_po2(uint64_t n)
 __attribute__((noreturn))
 void crash(void)
 {
-    //assert(0);
+    assert(0);
     __asm__("int3");
     while(1);
 }
@@ -561,6 +561,8 @@ enum { // kind
     VAL_STACK_BOTTOM, // pointer relative to base pointer
     VAL_STACK_TOP, // on stack
     VAL_ANYWHERE, // absolute pointer
+    
+    VAL_REDIRECTED, // local variable that has been redirected to a return pointer. can only occur for local variables.
 };
 
 //VAL_CONSTANTPTR,
@@ -2068,6 +2070,7 @@ void compile_unary_bitnot(StackItem * val)
 
 Type * return_type = 0;
 FuncDef * current_funcdef = 0;
+char * return_redir = 0;
 
 void compile_code(Node * ast, int want_ptr)
 {
@@ -2079,53 +2082,56 @@ void compile_code(Node * ast, int want_ptr)
     {
         printf("return A %zu\n", stack_offset);
         
-        if (ast->first_child)
-            compile_code(ast->first_child, 0);
-        
-        StackItem * expr = stack_peek();
-        if (!expr)
-            assert(return_type == get_type("void"));
-        else
+        if (!return_redir)
         {
-            expr = stack_pop();
-            Value * val = expr->val;
-            assert(types_same(return_type, val->type));
-            if (type_is_composite(return_type))
+            if (ast->first_child)
+                compile_code(ast->first_child, 0);
+            
+            StackItem * expr = stack_peek();
+            if (!expr)
+                assert(return_type == get_type("void"));
+            else
             {
-                Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
-                assert(var);
-                assert(("internal error: return slot variable for composite type return not found", var));
-                if (var->val->kind != VAL_STACK_BOTTOM)
+                expr = stack_pop();
+                Value * val = expr->val;
+                assert(types_same(return_type, val->type));
+                if (type_is_composite(return_type))
                 {
-                    printf("actual kind %d\n", var->val->kind);
-                    assert(var->val->kind == VAL_STACK_BOTTOM);
+                    Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
+                    assert(var);
+                    assert(("internal error: return slot variable for composite type return not found", var));
+                    if (var->val->kind != VAL_STACK_BOTTOM)
+                    {
+                        printf("actual kind %d\n", var->val->kind);
+                        assert(var->val->kind == VAL_STACK_BOTTOM);
+                    }
+                    printf("returning into pointer found at RBP minus %zd....\n", var->val->loc);
+                    
+                    emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                    
+                    if (val->kind == VAL_CONSTANT)
+                    {
+                        assert(("TODO: const composite returns", 0));
+                    }
+                    else if (val->kind == VAL_STACK_TOP)
+                    {
+                        size_t size = guess_stack_size_from_size(val->type->size);
+                        emit_memcpy_static_bothdiscard(RAX, RSP, val->type->size);
+                        emit_shrink_stack_safe(size);
+                    }
+                    else
+                        assert(("TODO: unknown type of composite return", 0));
                 }
-                printf("returning into pointer found at RBP minus %zd....\n", var->val->loc);
-                
-                emit_mov_offset(RAX, RBP, -var->val->loc, 8);
-                
-                if (val->kind == VAL_CONSTANT)
+                else if (type_is_float(return_type))
                 {
-                    assert(("TODO: const composite returns", 0));
+                    _push_small_if_const(val);
+                    emit_xmm_pop_safe(XMM0, 8);
                 }
-                else if (val->kind == VAL_STACK_TOP)
+                else if (!type_is_void(return_type))
                 {
-                    size_t size = guess_stack_size_from_size(val->type->size);
-                    emit_memcpy_static_bothdiscard(RAX, RSP, val->type->size);
-                    emit_shrink_stack_safe(size);
+                    _push_small_if_const(val);
+                    emit_pop_safe(RAX);
                 }
-                else
-                    assert(("TODO: unknown type of composite return", 0));
-            }
-            else if (type_is_float(return_type))
-            {
-                _push_small_if_const(val);
-                emit_xmm_pop_safe(XMM0, 8);
-            }
-            else if (!type_is_void(return_type))
-            {
-                _push_small_if_const(val);
-                emit_pop_safe(RAX);
             }
         }
         
@@ -2260,7 +2266,8 @@ void compile_code(Node * ast, int want_ptr)
             Type * type = var->val->type;
             
             uint8_t is_const = var->val->kind == VAL_CONSTANT;
-            assert(var->val->kind == VAL_STACK_BOTTOM || is_const);
+            assert(var->val->kind == VAL_STACK_BOTTOM || var->val->kind == VAL_REDIRECTED || is_const);
+            assert((var->val->kind == VAL_REDIRECTED) + is_const < 2);
             
             if (is_const)
             {
@@ -2270,8 +2277,6 @@ void compile_code(Node * ast, int want_ptr)
                 if (want_ptr == 0)
                 {
                     stack_push_new(var->val);
-                    //printf("rvar is const...? %d\n", var->val->kind == VAL_CONSTANT);
-                    //printf("__ __ -!_ -> %zd %zd %p\n", var->val->_val, var->val->loc, (void *)var->val->mem);
                 }
                 else
                 {
@@ -2287,8 +2292,11 @@ void compile_code(Node * ast, int want_ptr)
             else if (want_ptr != 0 && !(want_ptr == WANT_PTR_VIRTUAL && type_is_funcpointer(type)))
             {
                 type = make_ptr_type(type);
-                emit_lea(RAX, RBP, -var->val->loc);
-                
+                if (var->val->kind == VAL_REDIRECTED)
+                    emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                else
+                    emit_lea(RAX, RBP, -var->val->loc);
+                    
                 emit_push_safe_discard(RAX);
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -2306,8 +2314,13 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     size_t size = guess_stack_size_from_size(type->size);
                     emit_expand_stack_safe(size);
-                    emit_lea(RSI, RBP, -var->val->loc);
-                    emit_memcpy_static(RSP, RSI, type->size);
+                    
+                    if (var->val->kind == VAL_REDIRECTED)
+                        emit_mov_offset(RDX, RBP, -var->val->loc, 8);
+                    else
+                        emit_lea(RDX, RBP, -var->val->loc);
+                    
+                    emit_memcpy_static_discard(RSP, RDX, type->size);
                 }
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -2379,6 +2392,12 @@ void compile_code(Node * ast, int want_ptr)
             if (var->val->kind == VAL_STACK_BOTTOM)
             {
                 emit_lea(RAX, RBP, -var->val->loc);
+                emit_push_safe_discard(RAX);
+                stack_push_new(var->val);
+            }
+            else if (var->val->kind == VAL_REDIRECTED)
+            {
+                emit_mov_offset(RAX, RBP, -var->val->loc, 8);
                 emit_push_safe_discard(RAX);
                 stack_push_new(var->val);
             }
@@ -2457,9 +2476,7 @@ void compile_code(Node * ast, int want_ptr)
                         arg_stack_size = -return_where;
                 }
                 
-                
                 uint8_t do_arg_var_opt = 1;
-                
                 
                 GenericList * argwheres = 0;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
@@ -2534,6 +2551,11 @@ void compile_code(Node * ast, int want_ptr)
                             if (value->kind == VAL_STACK_BOTTOM)
                             {
                                 emit_lea(RAX, RBP, -value->loc);
+                                emit_push_safe(RAX);
+                            }
+                            else if (value->kind == VAL_REDIRECTED)
+                            {
+                                emit_mov_offset(RAX, RBP, -value->loc, 8);
                                 emit_push_safe(RAX);
                             }
                             else if (value->kind == VAL_GLOBAL)
@@ -3217,7 +3239,7 @@ void compile_code(Node * ast, int want_ptr)
     case DECLARATION:
     case FULLDECLARATION:
     {
-        printf("%zu\n", stack_offset);
+        //printf("%zu\n", stack_offset);
         assert(stack_offset == 0);
         
         Type * type = parse_type(nth_child(ast, 0));
@@ -3279,7 +3301,7 @@ void compile_code(Node * ast, int want_ptr)
                 //assert(("TODO/FIXME: non-const aggregate fulldeclaration", 0));
             }
             
-            printf("%zd\n", stack_offset);
+            //printf("%zd\n", stack_offset);
             assert(stack_offset == 0);
         }
     } break;
@@ -4228,10 +4250,117 @@ void compile_code(Node * ast, int want_ptr)
     //printf("code len after token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
 }
 
-// *found_new must start out set to 0. if a single particular in-place return is found, 
-void compile_def_find_inplace_return(Node * ast, const FuncDef * funcdef, char ** found_name)
+// *found_new must start out set to 0. If a single particular in-place return is found,
+//  it will point to its name. Else, it will be 0 or -1.
+// This is a very, very, very basic analysis; if a new variable is defined with the same name 
+//  and type as the argument anywhere, it returns -1, even if that variable is not returned.
+void compile_def_find_inplace_return(Node * ast, char ** found_name)
 {
+    if (*found_name == (char *)(int64_t)-1)
+        return;
+    assert(ast);
     
+    switch (ast->type)
+    {
+    case FUNCDEF:
+    {
+        Node * statement = nth_child(ast, 4)->first_child;
+        assert(statement);
+        while (statement)
+        {
+            compile_def_find_inplace_return(statement, found_name);
+            statement = statement->next_sibling;
+        }
+    } break;
+    case CONSTEXPR_FULLDECLARATION:
+    case DECLARATION:
+    case FULLDECLARATION:
+    {
+        Type * type = parse_type(nth_child(ast, 0));
+        Node * name = nth_child(ast, 1);
+        
+        char * name_text = strcpy_len(name->text, name->textlen);
+        
+        GenericList * arg = current_funcdef->signature->next;
+        GenericList * arg_name = current_funcdef->arg_names;
+        while (arg)
+        {
+            assert(arg_name);
+            Type * argtype = arg->item;
+            char * argname = arg_name->item;
+            if (strcmp(name_text, argname) == 0 && types_same(argtype, type))
+            {
+                puts("-`0 0`2 0-`420 2`0   rejecting (variable declared with same name as an arg)");
+                *found_name = (char *)(int64_t)-1;
+                return;
+            }
+            arg_name = arg_name->next;
+            arg = arg->next;
+        }
+    } break;
+    case RETURN:
+    {
+        printf("return A %zu\n", stack_offset);
+        Node * child = ast->first_child;
+        if (!child || child->type != RVAR_NAME)
+        {
+            puts("-`0 0`2 0-`420 2`0   rejecting (void return)");
+            *found_name = (char *)(int64_t)-1;
+            return;
+        }
+        
+        char * rvar_name = strcpy_len(child->text, child->textlen);
+        
+        if (*found_name)
+        {
+            if (strcmp(rvar_name, *found_name) != 0)
+            {
+                puts("-`0 0`2 0-`420 2`0   rejecting (return of other variable)");
+                *found_name = (char *)(int64_t)-1;
+                return;
+            }
+        }
+        else
+        {
+            GenericList * arg = current_funcdef->signature->next;
+            GenericList * arg_name = current_funcdef->arg_names;
+            while (arg)
+            {
+                assert(arg_name);
+                Type * argtype = arg->item;
+                char * argname = arg_name->item;
+                if (strcmp(rvar_name, argname) == 0)
+                {
+                    if (!types_same(argtype, return_type))
+                    {
+                        puts("-`0 0`2 0-`420 2`0   rejecting (return of wrong type)");
+                        *found_name = (char *)(int64_t)-1;
+                        return;
+                    }
+                    else
+                    {
+                        *found_name = rvar_name;
+                    }
+                }
+                arg_name = arg_name->next;
+                arg = arg->next;
+            }
+            if (!*found_name)
+            {
+                puts("-`0 0`2 0-`420 2`0   rejecting (return of non-arg variable)");
+                *found_name = (char *)(int64_t)-1;
+                return;
+            }
+        }
+        puts("-");
+    } break;
+    }
+    Node * child = ast->first_child;
+    while (child)
+    {
+        compile_def_find_inplace_return(child, found_name);
+        child = child->next_sibling;
+    }
 }
 
 void compile_defs_compile(Node * ast)
@@ -4251,6 +4380,7 @@ void compile_defs_compile(Node * ast)
         funcdef->code_offset = emitter_get_code_len();
         add_visible_function(funcdef, emitter_get_code_len());
         
+        return_redir = 0;
         stack_loc = 0;
         local_vars = 0;
         
@@ -4265,6 +4395,25 @@ void compile_defs_compile(Node * ast)
         GenericList * arg = funcdef->signature->next;
         GenericList * arg_name = funcdef->arg_names;
         
+        // only worth doing for composite return types
+        if (type_is_composite(return_type))
+        {
+            compile_def_find_inplace_return(ast, &return_redir);
+        }
+        /*
+        if (type_is_composite(return_type))
+        {
+            if (return_redir == (char *)(int64_t)-1)
+                puts("-- `-1 -1`2 2-4`12-4 `124- did not find name (rejected)");
+            else if (return_redir)
+                printf("-- `-1 -1`2 2-4`12-4 `124- did we find the name? %s\n", return_redir);
+            else
+                puts("-- `-1 -1`2 2-4`12-4 `124- did not find name (none)");
+        }
+        */
+        if (return_redir == (char *)(int64_t)-1)
+            return_redir = 0;
+        
         if (type_is_composite(return_type))
         {
             Type * type = make_ptr_type(return_type);
@@ -4277,18 +4426,36 @@ void compile_defs_compile(Node * ast)
             var->val->kind = VAL_STACK_BOTTOM;
             var->val->loc = stack_loc;
         }
+        
         while (arg)
         {
             Type * type = arg->item;
-            size_t align = guess_alignment_from_size(type->size);
-            stack_loc += type->size;
-            while (stack_loc % align)
-                stack_loc++;
-            
-            Variable * var = add_local(arg_name->item, type);
-            var->val->kind = VAL_STACK_BOTTOM;
-            var->val->loc = stack_loc;
-            
+            if (return_redir && strcmp(return_redir, arg_name->item) == 0)
+            {
+                stack_loc += 8;
+                while (stack_loc % 8)
+                    stack_loc++;
+                
+                Variable * var = add_local(arg_name->item, type);
+                Variable * var_return = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
+                assert(var_return);
+                assert(var_return->val);
+                assert(var_return->val->loc);
+                
+                var->val->kind = VAL_REDIRECTED;
+                var->val->loc = var_return->val->loc;
+            }
+            else
+            {
+                size_t align = guess_alignment_from_size(type->size);
+                stack_loc += type->size;
+                while (stack_loc % align)
+                    stack_loc++;
+                
+                Variable * var = add_local(arg_name->item, type);
+                var->val->kind = VAL_STACK_BOTTOM;
+                var->val->loc = stack_loc;
+            }
             arg_name = arg_name->next;
             arg = arg->next;
         }
@@ -4348,7 +4515,10 @@ void compile_defs_compile(Node * ast)
                         emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
                     else
                     {
-                        emit_lea(RAX, RBP, -var->val->loc);
+                        if (return_redir && strcmp(return_redir, arg_name->item) == 0)
+                            emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                        else
+                            emit_lea(RAX, RBP, -var->val->loc);
                         if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
                         {
                             int b = -1;
@@ -4381,7 +4551,10 @@ void compile_defs_compile(Node * ast)
                 else
                 {
                     emit_mov_offset(R10, RBP, -where, 8);
-                    emit_lea(RAX, RBP, -var->val->loc);
+                    if (return_redir && strcmp(return_redir, arg_name->item) == 0)
+                        emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                    else
+                        emit_lea(RAX, RBP, -var->val->loc);
                     emit_memcpy_static_bothdiscard(RAX, R10, var->val->type->size);
                 }
             }
@@ -4614,6 +4787,7 @@ void compile(Node * ast)
 
         add_visible_function(funcdef, emitter_get_code_len());
         
+        return_redir = 0;
         stack_loc = 0;
         local_vars = 0;
         
