@@ -14,14 +14,14 @@ Vector3 vec3_mul_f64(Vector3 a, f64 b)
     //a.z = a.z * b;
     return a;
 }
-void vec3_sub_vec3(Vector3 a, Vector3 b)
+Vector3 vec3_sub_vec3(Vector3 a, Vector3 b)
 {
-    return;
+    return a;
 }
 export_extern void main()
 {
     //Vector3 zero = Vector3 { 0.0f64, 0.0f64, 0.0f64 };
     Vector3 zero = Vector3 { 0.0f64 };
-    vec3_sub_vec3(zero, zero);
+    zero = vec3_sub_vec3(zero, zero);
     return;
 }

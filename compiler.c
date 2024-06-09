@@ -3320,6 +3320,22 @@ void compile_code(Node * ast, int want_ptr)
         
         assert(expr);
         
+        #define CHECK_TYPE____KNR_INTERNAL_agig234iGG \
+        { \
+            assert(target); \
+            assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_STACK_TOP); \
+            if (target->kind == VAL_STACK_TOP) \
+            { \
+                assert(type_is_pointer(target->type)); \
+                assert(types_same(target->type->inner_type, expr->type)); \
+            } \
+            else if (target->kind == VAL_STACK_BOTTOM) \
+                assert(types_same(target->type, expr->type)); \
+        }
+        
+        if (target)
+            CHECK_TYPE____KNR_INTERNAL_agig234iGG
+        
         if (type_is_composite(expr->type))
         {
             if (expr->kind == VAL_CONSTANT)
@@ -3328,6 +3344,7 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     compile_code(nth_child(ast, 0), 0);
                     target = stack_pop()->val;
+                    CHECK_TYPE____KNR_INTERNAL_agig234iGG
                 }
                 
                 emit_pop_safe(RDI);
@@ -3356,6 +3373,7 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     compile_code(nth_child(ast, 0), 0);
                     target = stack_pop()->val;
+                    CHECK_TYPE____KNR_INTERNAL_agig234iGG
                 }
                 
                 assert((ptrdiff_t)size + 8 == stack_offset);
@@ -3382,6 +3400,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 compile_code(nth_child(ast, 0), 0);
                 target = stack_pop()->val;
+                CHECK_TYPE____KNR_INTERNAL_agig234iGG
             }
             
             emit_pop_safe(RAX); // destination location into RAX
@@ -3389,19 +3408,7 @@ void compile_code(Node * ast, int want_ptr)
             emit_mov_into_offset_bothdiscard(RAX, RDX, 0, expr->type->size);
         }
         
-        assert(target->kind == VAL_STACK_BOTTOM || target->kind == VAL_STACK_TOP);
-        assert(target);
-        
-        if (target->kind == VAL_STACK_TOP)
-        {
-            assert(type_is_pointer(target->type));
-            assert(types_same(target->type->inner_type, expr->type));
-        }
-        else if (target->kind == VAL_STACK_BOTTOM)
-        {
-            assert(types_same(target->type, expr->type));
-        }
-        
+        #undef CHECK_TYPE____KNR_INTERNAL_agig234iGG
     } break;
     case SIZEOF:
     {

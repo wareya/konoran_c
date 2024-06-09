@@ -2253,7 +2253,8 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
     
     size_t i = 0;
     // slower for small moves for mysterious reasons, at least on my CPU
-    if (total >= 80)
+    //if (total >= 80)
+    if (total >= 16)
     {
         size_t fast_part = total - (total % 16);
         for (i = 0; i + 16 <= fast_part; i += 16)
@@ -3010,6 +3011,7 @@ uint8_t emitter_log_try_optimize(void)
             EmitterLog * memcpy_1st = emitter_log_erase_nth(0);
             memcpy_2nd->args[1] = memcpy_1st->args[1];
             memcpy_2nd->args[3] = memcpy_1st->args[3];
+            memcpy_2nd->funcptr = memcpy_1st->funcptr;
             emitter_log_add(memcpy_2nd);
             return 1;
         }
