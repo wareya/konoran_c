@@ -2452,26 +2452,6 @@ void emitter_log_apply(EmitterLog * log)
     if (!logfile)
         logfile = fopen("emitterlog.txt", "w");
     
-    fprintf(logfile, "%32s", (log->fname + 11));
-    if (log->argcount > 0)
-    {
-        fprintf(logfile, "    ");
-        for (size_t i = 0; i + 1 < log->argcount; i += 1)
-        {
-            if ((int64_t)log->args[i] >= -2147483648 && (int64_t)log->args[i] <= 2147483647)
-                fprintf(logfile, "%zd, ", log->args[i]);
-            else
-                fprintf(logfile, "%#zx, ", log->args[i]);
-        }
-        
-        size_t i = log->argcount - 1;
-        if ((int64_t)log->args[i] >= -2147483648 && (int64_t)log->args[i] <= 2147483647)
-            fprintf(logfile, "%zd", log->args[i]);
-        else
-            fprintf(logfile, "%#zx", log->args[i]);
-    }
-    fprintf(logfile, "\n");
-    
     size_t startlen = code->len;
     
     if (log->funcptr == (void *)_impl_emit_jmp_short)
@@ -2764,6 +2744,26 @@ void emitter_log_apply(EmitterLog * log)
     fprintf(logfile, "0x%08zx:  ", startlen);
     for (size_t i = startlen; i < code->len; i++)
         fprintf(logfile, "%02x ", code->data[i]);
+    fprintf(logfile, "\n");
+    
+    fprintf(logfile, "%32s", (log->fname + 11));
+    if (log->argcount > 0)
+    {
+        fprintf(logfile, "    ");
+        for (size_t i = 0; i + 1 < log->argcount; i += 1)
+        {
+            if ((int64_t)log->args[i] >= -2147483648 && (int64_t)log->args[i] <= 2147483647)
+                fprintf(logfile, "%zd, ", log->args[i]);
+            else
+                fprintf(logfile, "%#zx, ", log->args[i]);
+        }
+        
+        size_t i = log->argcount - 1;
+        if ((int64_t)log->args[i] >= -2147483648 && (int64_t)log->args[i] <= 2147483647)
+            fprintf(logfile, "%zd", log->args[i]);
+        else
+            fprintf(logfile, "%#zx", log->args[i]);
+    }
     fprintf(logfile, "\n");
 }
 
@@ -3297,7 +3297,6 @@ uint8_t emitter_log_try_optimize(void)
             ) &&
             log_prev->args[0] != log_next->args[0] &&
             log_prev->args[1] != log_next->args[0] &&
-            log_prev->args[0] != log_next->args[1] &&
             
             log_next->args[0] != RSP &&
             log_next->args[0] != RCX && log_prev->args[0] != RCX &&
@@ -3308,11 +3307,18 @@ uint8_t emitter_log_try_optimize(void)
             log_next->args[1] != RSI
             )
         {
-            EmitterLog * mov = emitter_log_erase_nth(0);
-            EmitterLog * memcpy = emitter_log_erase_nth(0);
-            emitter_log_add(mov);
-            emitter_log_add(memcpy);
-            return 1;
+            // this reorder is only safe if we know there's no overlap
+            // between memcpy target and mov-offset source
+            if (log_next->funcptr == (void *)_impl_emit_mov ||
+                log_next->funcptr == (void *)_impl_emit_mov_discard ||
+                (log_prev->args[0] == log_next->args[1] && log_prev->args[3] <= log_next->args[2]))
+            {
+                EmitterLog * mov = emitter_log_erase_nth(0);
+                EmitterLog * memcpy = emitter_log_erase_nth(0);
+                emitter_log_add(mov);
+                emitter_log_add(memcpy);
+                return 1;
+            }
         }
         
         // redundant memcpys
@@ -3601,12 +3607,12 @@ uint8_t emitter_log_try_optimize(void)
         EmitterLog * log_2 = emitter_log_get_nth(1);
         EmitterLog * log_3 = emitter_log_get_nth(0);
         
-        // swap for more effective optimization
-        if ((   log_1->funcptr == (void *)_impl_emit_mov_xmm_from_offset
-             || log_1->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+        if ((   log_1->funcptr == (void *)_impl_emit_memcpy_static
+             || log_1->funcptr == (void *)_impl_emit_memcpy_static_discard
+             || log_1->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
             ) &&
-            (   log_2->funcptr == (void *)_impl_emit_mov_xmm_from_offset
-             || log_2->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+            (   log_2->funcptr == (void *)_impl_emit_mov_offset
+             || log_2->funcptr == (void *)_impl_emit_mov_offset
             ) &&
             (   log_3->funcptr == (void *)_impl_emit_float_add
              || log_3->funcptr == (void *)_impl_emit_float_sub

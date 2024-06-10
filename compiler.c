@@ -3410,11 +3410,11 @@ void compile_code(Node * ast, int want_ptr)
                 assert((ptrdiff_t)size + 8 == stack_offset);
                 
                 if (!simple_target)
-                    emit_mov_offset(RAX, RSP, size, 8);
+                    emit_mov_offset(RDX, RSP, size, 8);
                 else
-                    emit_pop_safe(RAX);
+                    emit_pop_safe(RDX);
                 
-                emit_memcpy_static_bothdiscard(RAX, RSP, expr->type->size);
+                emit_memcpy_static_bothdiscard(RDX, RSP, expr->type->size);
                 
                 if (!simple_target)
                     emit_shrink_stack_safe(size + 8);
