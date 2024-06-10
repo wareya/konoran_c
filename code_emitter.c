@@ -2772,7 +2772,21 @@ uint8_t emitter_log_try_optimize(void)
                      || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset
                      || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
                      )
-                    break;
+                    {
+                        uint8_t clobbered = 1;
+                        // RBP is the only register we assume doesn't change mid-function
+                        // so, it's the only one we can do offset overlap tests with
+                        if (log_next->args[1] == RBP && log_prev->args[0] == RBP)
+                        {
+                            // only bother doing 8-byte-size overlap checks
+                            ptrdiff_t diff = log_prev->args[2] - log_next->args[2];
+                            if (diff < -8 || diff > 8)
+                                clobbered = 0;
+                        }
+                        
+                        if (clobbered)
+                            break;
+                    }
                 }
                 else
                     break;
@@ -2860,7 +2874,11 @@ uint8_t emitter_log_try_optimize(void)
         {
             uint64_t reg_d = emitter_log_erase_nth(0)->args[0];
             uint64_t reg_s = emitter_log_erase_nth(0)->args[0];
-            _emitter_log_add_3(1, _impl_emit_mov_xmm_from_base, reg_d, reg_s, 8);
+            
+            if (log_prev->funcptr == (void *)_impl_emit_push_discard)
+                _emitter_log_add_3(1, _impl_emit_mov_xmm_from_base_discard, reg_d, reg_s, 8);
+            else
+                _emitter_log_add_3(1, _impl_emit_mov_xmm_from_base        , reg_d, reg_s, 8);
             return 1;
         }
         
@@ -3080,6 +3098,25 @@ uint8_t emitter_log_try_optimize(void)
         }
         
         // swap for more effective optimization
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov_offset
+             || log_prev->funcptr == (void *)_impl_emit_mov_offset_discard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset
+             || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+            ) &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != log_next->args[1] &&
+            log_prev->args[1] != log_next->args[0]
+            )
+        {
+            EmitterLog * mov2 = emitter_log_erase_nth(0);
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            emitter_log_add(mov2);
+            emitter_log_add(mov);
+            return 1;
+        }
+        
+        // swap for more effective optimization
         if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
              || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
              || log_prev->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
@@ -3127,6 +3164,28 @@ uint8_t emitter_log_try_optimize(void)
             memcpy_2nd->args[3] = memcpy_1st->args[3];
             memcpy_2nd->funcptr = memcpy_1st->funcptr;
             emitter_log_add(memcpy_2nd);
+            return 1;
+        }
+        
+        // mov    rax,QWORD PTR [rbp-0x28]
+        // movq   xmm1,rax
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov_offset
+             || log_prev->funcptr == (void *)_impl_emit_mov_offset_discard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov_xmm_from_base_discard
+            ) &&
+            log_prev->args[0] == log_next->args[1] &&
+            log_prev->args[3] == log_next->args[2]
+            )
+        {
+            EmitterLog * xmmmov = emitter_log_erase_nth(0);
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            
+            if (log_prev->funcptr == (void *)_impl_emit_mov_offset_discard)
+                _emitter_log_add_4(1, _impl_emit_mov_xmm_from_offset_discard, xmmmov->args[0], mov->args[1], mov->args[2], mov->args[3]);
+            else
+                _emitter_log_add_4(1, _impl_emit_mov_xmm_from_offset        , xmmmov->args[0], mov->args[1], mov->args[2], mov->args[3]);
+            
             return 1;
         }
         
