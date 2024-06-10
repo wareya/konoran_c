@@ -2181,28 +2181,26 @@ void _emit_push_preg(int reg)
 // 41 ff 75 00             push   QWORD PTR [r13+0x0]
 }
 */
-void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset)
+void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset, uint8_t aligned)
 {
     last_is_terminator = 0;
     assert(reg_d >= XMM0 && reg_d <= XMM7);
     assert(reg_s <= R15);
     
-    if (0) // movdqu
-    {
-        byte_push(code, 0xF3);
-        if (reg_s >= R8)
-            byte_push(code, 0x41);
-        byte_push(code, 0x0F);
-        byte_push(code, 0x6F);
-    }
-    else // movups
-    {
-        if (reg_s >= R8)
-            byte_push(code, 0x41);
-        byte_push(code, 0x0F);
+    // RBP is guaranteed to be 16-byte aligned!
+    if (reg_s == RBP && (offset % 16) == 0)
+        aligned = 1;
+    
+    if (aligned)
+        puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
+    
+    if (reg_s >= R8)
+        byte_push(code, 0x41);
+    byte_push(code, 0x0F);
+    if (aligned)
+        byte_push(code, 0x28); // movaps
+    else
         byte_push(code, 0x10); // movups
-        //byte_push(code, 0x28); // movaps
-    }
     
     reg_d &= 7;
     reg_s &= 7;
@@ -2210,7 +2208,7 @@ void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset)
     _emit_addrblock(reg_d, reg_s, offset);
 }
 
-void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
+void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset, uint8_t aligned)
 {
 // 0f 11 00                movups XMMWORD PTR [rax],xmm0
 // 0f 11 40 01             movups XMMWORD PTR [rax+0x1],xmm0
@@ -2221,22 +2219,20 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
     assert(reg_d <= R15);
     assert(reg_s >= XMM0 && reg_s <= XMM7);
     
-    if (0) // movdqu
-    {
-        byte_push(code, 0xF3);
-        if (reg_d >= R8)
-            byte_push(code, 0x41);
-        byte_push(code, 0x0F);
-        byte_push(code, 0x7F);
-    }
-    else // movups
-    {
-        if (reg_d >= R8)
-            byte_push(code, 0x41);
-        byte_push(code, 0x0F);
+    // RBP is guaranteed to be 16-byte aligned!
+    if (reg_d == RBP && (offset % 16) == 0)
+        aligned = 1;
+    
+    if (aligned)
+        puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
+    
+    if (reg_d >= R8)
+        byte_push(code, 0x41);
+    byte_push(code, 0x0F);
+    if (aligned)
+        byte_push(code, 0x29); // movaps
+    else
         byte_push(code, 0x11); // movups
-        //byte_push(code, 0x29); // movaps
-    }
     
     reg_d &= 7;
     reg_s &= 7;
@@ -2263,6 +2259,15 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
     }
     
     size_t i = 0;
+    /*
+    if (total >= 80 ||
+        (total >= 16 &&
+            ((reg_d == RBP && (offset_d % 16) == 0) &&
+             (reg_s == RBP && (offset_s % 16) == 0)
+            )
+       ))
+    */
+    
     // slower for small moves for mysterious reasons, at least on my CPU
     if (total >= 80)
     //if (total >= 16)
@@ -2270,8 +2275,8 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
         size_t fast_part = total - (total % 16);
         for (i = 0; i + 16 <= fast_part; i += 16)
         {
-            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i + offset_s);
-            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i + offset_d);
+            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i + offset_s, 0);
+            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i + offset_d, 0);
         }
         if ((total - i) >= 8)
         {

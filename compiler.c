@@ -4448,6 +4448,7 @@ void compile_defs_compile(Node * ast)
             else
             {
                 size_t align = guess_alignment_from_size(type->size);
+                printf("alignment ------ %zd\n", align);
                 stack_loc += type->size;
                 while (stack_loc % align)
                     stack_loc++;
