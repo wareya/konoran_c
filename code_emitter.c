@@ -2200,7 +2200,8 @@ void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset)
         if (reg_s >= R8)
             byte_push(code, 0x41);
         byte_push(code, 0x0F);
-        byte_push(code, 0x10);
+        byte_push(code, 0x10); // movups
+        //byte_push(code, 0x28); // movaps
     }
     
     reg_d &= 7;
@@ -2233,7 +2234,8 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset)
         if (reg_d >= R8)
             byte_push(code, 0x41);
         byte_push(code, 0x0F);
-        byte_push(code, 0x11);
+        byte_push(code, 0x11); // movups
+        //byte_push(code, 0x29); // movaps
     }
     
     reg_d &= 7;
@@ -2752,10 +2754,12 @@ uint8_t emitter_log_try_optimize(void)
                     || log_prev->funcptr == (void *)_impl_emit_float_sqrt
                     )
                 {
-                    if (log_prev->args[0] == log_next->args[1] || log_prev->args[0] == log_next->args[0])
+                    if (   log_prev->args[0] == log_next->args[0] // clobber each other
+                        || log_prev->args[0] == log_next->args[1] // prev output clobbers next input
+                        )
                         break;
                 }
-                // clobbers no register
+                // clobbers no register, but DOES clobber memory, which we might have mov'd into!
                 else if (   
                        log_prev->funcptr == (void *)_impl_emit_mov_into_offset
                     || log_prev->funcptr == (void *)_impl_emit_mov_into_offset_discard
@@ -2763,7 +2767,12 @@ uint8_t emitter_log_try_optimize(void)
                     || log_prev->funcptr == (void *)_impl_emit_mov_offset_from_xmm
                     || log_prev->funcptr == (void *)_impl_emit_mov_offset_from_xmm_discard)
                 {
-                    ; //
+                    if (log_next->funcptr == (void *)_impl_emit_mov_offset
+                     || log_next->funcptr == (void *)_impl_emit_mov_offset_discard
+                     || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset
+                     || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+                     )
+                    break;
                 }
                 else
                     break;
@@ -3121,6 +3130,23 @@ uint8_t emitter_log_try_optimize(void)
             return 1;
         }
         
+        // add    rdx, rax
+        // mov    rax, rdx
+        if (log_prev->funcptr == (void *)_impl_emit_add &&
+            log_next->funcptr == (void *)_impl_emit_mov_discard &&
+            log_prev->args[0] == log_next->args[1] &&
+            log_prev->args[1] == log_next->args[0] && 
+            log_prev->args[2] == log_next->args[2]
+            )
+        {
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            EmitterLog * add = emitter_log_erase_nth(0);
+            add->args[0] = mov->args[0];
+            add->args[1] = mov->args[1];
+            emitter_log_add(add);
+            return 1;
+        }
+        
         // lea    rax,[rbp-0x40]
         // mov    rdx,rax
         if (log_prev->funcptr == (void *)_impl_emit_lea &&
@@ -3133,8 +3159,9 @@ uint8_t emitter_log_try_optimize(void)
             emitter_log_add(lea);
             return 1;
         }
+        
         // lea    rax,[rbp-0x40]
-        // mov    rdx,rax
+        // push   rax
         if (log_prev->funcptr == (void *)_impl_emit_lea &&
             log_next->funcptr == (void *)_impl_emit_push_discard &&
             log_prev->args[0] == log_next->args[0])

@@ -1,0 +1,33 @@
+// core types: u8, i8, u16, i16, u32, i32, u64, i64, f32, f64
+// pointer types: ptr(type), funcptr(returntype, (arg1type, arg2type, ...))
+// composite types: structs, array(type, len)
+
+
+// an implementation of the infamous nbody benchmark!
+// ported from https://benchmarksgame-team.pages.debian.net/benchmarksgame/performance/nbody.html
+
+void main()
+{
+    u64 count = 5u64;
+
+    array(f64, 1) bodies = [
+        0.0f64,
+    ];
+    
+    loop_head:
+    if (count > 0u64)
+    {
+        i64 i = 0i64;
+        loop_outer:
+            f64 vel = bodies[0i64];
+            bodies[i] = vel;
+            i = i + 1i64;
+            if (i < 1i64)
+                goto loop_outer;
+        
+        count = count - 1u64;
+        goto loop_head;
+    }
+    
+    return;
+}
