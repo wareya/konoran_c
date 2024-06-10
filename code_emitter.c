@@ -142,6 +142,9 @@ void do_fix_jumps(void)
     clear_jump_log();
 }
 
+uint64_t last_pushed_reg    = RAX;
+uint64_t last_pushed_xmmreg = XMM0;
+
 typedef struct _EmitterLog {
     void * funcptr;
     uint64_t args[8];
@@ -812,6 +815,11 @@ void _impl_emit_not(int reg, size_t size)
 void emit_not(int reg, size_t size)
 {
     emitter_log_add_2(_impl_emit_not, reg, size);
+}
+
+void _impl_emit_mull_imm(int reg_d, int reg_s, uint64_t imm, size_t size)
+{
+    
 }
 
 void _emit_float_op(int reg_d, int reg_s, size_t size, uint8_t op)
@@ -1680,6 +1688,8 @@ void emit_mov_reg_preg_discard(int reg_d, int preg_s, size_t size)
 
 void _impl_emit_push(int reg)
 {
+    last_pushed_reg = reg;
+    
     last_is_terminator = 0;
     if (reg >= R8 && reg <= R15)
     {
@@ -1749,6 +1759,8 @@ void emit_pop(int reg)
 // stack always moves by 8 bytes
 void _impl_emit_xmm_push(int reg, int size)
 {
+    last_pushed_xmmreg = reg;
+    
     last_is_terminator = 0;
     
 // 48 83 ec 08             sub    rsp, 8
@@ -2187,10 +2199,6 @@ void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset, uin
     assert(reg_d >= XMM0 && reg_d <= XMM7);
     assert(reg_s <= R15);
     
-    // RBP is guaranteed to be 16-byte aligned!
-    if (reg_s == RBP && (offset % 16) == 0)
-        aligned = 1;
-    
     if (aligned)
         puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
     
@@ -2218,10 +2226,6 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset, uin
     last_is_terminator = 0;
     assert(reg_d <= R15);
     assert(reg_s >= XMM0 && reg_s <= XMM7);
-    
-    // RBP is guaranteed to be 16-byte aligned!
-    if (reg_d == RBP && (offset % 16) == 0)
-        aligned = 1;
     
     if (aligned)
         puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
@@ -2258,25 +2262,39 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
         reg_d = RDI;
     }
     
-    size_t i = 0;
-    /*
-    if (total >= 80 ||
-        (total >= 16 &&
-            ((reg_d == RBP && (offset_d % 16) == 0) &&
-             (reg_s == RBP && (offset_s % 16) == 0)
-            )
-       ))
-    */
+    uint8_t d_aligned = 0;
+    uint8_t s_aligned = 0;
     
+    // RBP is guaranted to be 16-byte-aligned
+    if (reg_d == RBP && (offset_d % 16) == 0)
+        d_aligned = 1;
+    if (reg_s == RBP && (offset_s % 16) == 0)
+        s_aligned = 1;
+    
+    size_t i = 0;
+    #if 1
+    if (total >= 80 ||
+        (total >= 16 && s_aligned && d_aligned)
+       )
+    #else
     // slower for small moves for mysterious reasons, at least on my CPU
-    if (total >= 80)
-    //if (total >= 16)
+    //if (total >= 80)
+    if (total >= 16)
+    #endif
     {
+        /*
+        if (d_aligned && !s_aligned)
+        {
+            _impl_emit_lea(RCX, reg_s, offset_s);
+            _impl_emit_test(RCX, );
+            code->len;
+        }
+        */
         size_t fast_part = total - (total % 16);
         for (i = 0; i + 16 <= fast_part; i += 16)
         {
-            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i + offset_s, 0);
-            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i + offset_d, 0);
+            _impl_emit_mov_xmm128_from_offset(XMM4, reg_s, i + offset_s, s_aligned);
+            _impl_emit_mov_offset_from_xmm128(reg_d, XMM4, i + offset_d, d_aligned);
         }
         if ((total - i) >= 8)
         {
@@ -2335,7 +2353,8 @@ void _inner_emit_memcpy_static(int reg_d, int reg_s, size_t count, uint8_t disca
         else
             emitter_log_add_4(_impl_emit_mov_into_offset        , reg_d, RCX, 0, count);
     }
-    else if (count > 256)
+    //else if (count > 256)
+    else if (count > 128)
     {
         emit_memcpy_slow(reg_d, reg_s, count);
     }
@@ -2985,8 +3004,12 @@ uint8_t emitter_log_try_optimize(void)
              || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_offset
              || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
              || log_prev->funcptr == (void *)_impl_emit_mov_imm
+             || log_prev->funcptr == (void *)_impl_emit_shl
              || log_prev->funcptr == (void *)_impl_emit_add
              || log_prev->funcptr == (void *)_impl_emit_sub
+             || log_prev->funcptr == (void *)_impl_emit_shl_imm
+             || log_prev->funcptr == (void *)_impl_emit_add_imm
+             || log_prev->funcptr == (void *)_impl_emit_sub_imm
              || log_prev->funcptr == (void *)_impl_emit_float_add
              || log_prev->funcptr == (void *)_impl_emit_float_sub
              || log_prev->funcptr == (void *)_impl_emit_float_mul
@@ -3000,23 +3023,30 @@ uint8_t emitter_log_try_optimize(void)
              //|| log_next->funcptr == (void *)_impl_emit_lea
             ) &&
             log_prev->args[0] != log_next->args[0] &&
-            log_prev->args[1] != log_next->args[0] &&
             log_prev->args[0] != RSP &&
-            log_next->args[0] != RSP &&
-            log_prev->args[1] != RSP)
+            log_next->args[0] != RSP)
         {
+            uint8_t prev_singular = (
+                log_prev->funcptr == (void *)_impl_emit_shl_imm ||
+                log_prev->funcptr == (void *)_impl_emit_add_imm ||
+                log_prev->funcptr == (void *)_impl_emit_sub_imm ||
+                log_prev->funcptr == (void *)_impl_emit_mov_imm
+            );
             uint8_t next_singular = (
-                log_prev->funcptr == (void *)_impl_emit_pop ||
-                log_prev->funcptr == (void *)_impl_emit_xmm_pop
+                log_next->funcptr == (void *)_impl_emit_pop ||
+                log_next->funcptr == (void *)_impl_emit_xmm_pop
             );
             
-            if (next_singular || (log_prev->args[1] != log_next->args[0] && log_prev->args[0] != log_next->args[1]))
+            if (prev_singular || (log_prev->args[1] != log_next->args[0] && log_prev->args[1] != RSP))
             {
-                EmitterLog * pop = emitter_log_erase_nth(0);
-                EmitterLog * mov = emitter_log_erase_nth(0);
-                emitter_log_add(pop);
-                emitter_log_add(mov);
-                return 1;
+                if (next_singular || (log_prev->args[0] != log_next->args[1]))
+                {
+                    EmitterLog * pop = emitter_log_erase_nth(0);
+                    EmitterLog * mov = emitter_log_erase_nth(0);
+                    emitter_log_add(pop);
+                    emitter_log_add(mov);
+                    return 1;
+                }
             }
         }
         
@@ -3072,6 +3102,30 @@ uint8_t emitter_log_try_optimize(void)
                 emitter_log_add(push);
                 return 1;
             }
+        }
+        
+        // swap for more effective optimization
+        if ((   log_prev->funcptr == (void *)_impl_emit_lea
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_add
+             || log_next->funcptr == (void *)_impl_emit_add_imm
+             || log_next->funcptr == (void *)_impl_emit_add_imm32
+             || log_next->funcptr == (void *)_impl_emit_sub
+             || log_next->funcptr == (void *)_impl_emit_sub_imm
+             || log_next->funcptr == (void *)_impl_emit_sub_imm32
+            ) &&
+            log_prev->args[0] != RSP &&
+            log_prev->args[1] != RSP &&
+            log_prev->args[1] != log_next->args[0] &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != log_next->args[1]
+            )
+        {
+            EmitterLog * add = emitter_log_erase_nth(0);
+            EmitterLog * lea = emitter_log_erase_nth(0);
+            emitter_log_add(add);
+            emitter_log_add(lea);
+            return 1;
         }
         
         // swap for more effective optimization

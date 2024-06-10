@@ -2116,7 +2116,7 @@ void compile_code(Node * ast, int want_ptr)
                     else if (val->kind == VAL_STACK_TOP)
                     {
                         size_t size = guess_stack_size_from_size(val->type->size);
-                        emit_memcpy_static_bothdiscard(RAX, RSP, val->type->size);
+                        emit_memcpy_static_discard(RAX, RSP, val->type->size);
                         emit_shrink_stack_safe(size);
                     }
                     else
@@ -2253,6 +2253,8 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case RVAR_NAME:
     {
+        // NOTE: not allowed to thrash RDX
+        
         if (0)
         {
             size_t len = emitter_get_code_len();
@@ -2316,11 +2318,11 @@ void compile_code(Node * ast, int want_ptr)
                     emit_expand_stack_safe(size);
                     
                     if (var->val->kind == VAL_REDIRECTED)
-                        emit_mov_offset(RDX, RBP, -var->val->loc, 8);
+                        emit_mov_offset(RAX, RBP, -var->val->loc, 8);
                     else
-                        emit_lea(RDX, RBP, -var->val->loc);
+                        emit_lea(RAX, RBP, -var->val->loc);
                     
-                    emit_memcpy_static_discard(RSP, RDX, type->size);
+                    emit_memcpy_static_discard(RSP, RAX, type->size);
                 }
                 Value * value = new_value(type);
                 value->kind = VAL_STACK_TOP;
@@ -2341,8 +2343,8 @@ void compile_code(Node * ast, int want_ptr)
             
             if (want_ptr == 0)
             {
-                emit_mov_reg_preg_discard(RDX, RAX, var->val->type->size);
-                emit_push_safe_discard(RDX);
+                emit_mov_reg_preg_discard(RAX, RAX, var->val->type->size);
+                emit_push_safe_discard(RAX);
                 
                 Value * value = new_value(var->val->type);
                 value->kind = VAL_STACK_TOP;
@@ -2385,6 +2387,8 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case LVAR_NAME:
     {
+        // NOTE: not allowed to thrash RDX
+        
         assert(want_ptr == WANT_PTR_VIRTUAL);
         Variable * var = 0;
         if ((var = get_local(ast->text, ast->textlen)))
@@ -2813,9 +2817,9 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         uint64_t target_offset = struct_size_stack - inner_size_stack;
                         
-                        emit_lea(RDX, RSP, target_offset);
+                        emit_lea(RDI, RSP, target_offset);
                         // FIXME this is wrong! FIXME but how?
-                        emit_memcpy_static_bothdiscard(RDX, RAX, inner_type->size);
+                        emit_memcpy_static_bothdiscard(RDI, RAX, inner_type->size);
                         
                         emit_shrink_stack_safe(target_offset);
                         
@@ -2828,7 +2832,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_add(RSI, RAX, 8);
                         emit_expand_stack_safe(inner_size_stack);
                         
-                        emit_memcpy_static(RSP, RSI, inner_type->size);
+                        emit_memcpy_static_discard(RSP, RSI, inner_type->size);
                         
                         stack_push_new_top(inner_type);
                     }
@@ -2836,6 +2840,8 @@ void compile_code(Node * ast, int want_ptr)
             } break;
             case INDIRECTION:
             {
+                // NOTE: not allowed to thrash RDX
+                
                 Value * expr = stack_pop()->val;
                 Type * struct_type = expr->type;
                 // Indirection sometimes has to operate on a value instead of a virtual pointer.
@@ -2915,8 +2921,8 @@ void compile_code(Node * ast, int want_ptr)
                     }
                     else if (want_ptr == 0)
                     {
-                        emit_pop_safe(RDX);
-                        emit_mov_offset_discard(RAX, RDX, prop_offset, prop_type->size);
+                        emit_pop_safe(RAX);
+                        emit_mov_offset_discard(RAX, RAX, prop_offset, prop_type->size);
                         emit_push_safe_discard(RAX);
                         
                         stack_push_new_top(prop_type);
@@ -2945,8 +2951,8 @@ void compile_code(Node * ast, int want_ptr)
                         else if (prop_end <= target_offset)
                         {
                             emit_lea(RAX, RSP, prop_offset);
-                            emit_lea(RDX, RSP, target_offset);
-                            emit_memcpy_static_bothdiscard(RDX, RAX, prop_type->size);
+                            emit_lea(RDI, RSP, target_offset);
+                            emit_memcpy_static_bothdiscard(RDI, RAX, prop_type->size);
                             emit_shrink_stack_safe(target_offset);
                             stack_push_new_top(prop_type);
                         }
@@ -2963,7 +2969,7 @@ void compile_code(Node * ast, int want_ptr)
                         emit_add_imm_discard(RSI, prop_offset);
                         
                         emit_expand_stack_safe(prop_size_stack);
-                        emit_memcpy_static(RSP, RSI, prop_type->size);
+                        emit_memcpy_static_discard(RSP, RSI, prop_type->size);
                         
                         stack_push_new_top(prop_type);
                     }
@@ -3036,7 +3042,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_mov_imm64(RSI, loc);
                 log_static_relocation(emitter_get_code_len() - 8, loc);
                 
-                emit_memcpy_static(RSP, RSI, array_type->inner_type->size);
+                emit_memcpy_static_discard(RSP, RSI, array_type->inner_type->size);
             }
         }
         
@@ -3067,7 +3073,7 @@ void compile_code(Node * ast, int want_ptr)
                     
                     emit_lea(RDI, RSP, inner_size * i);
                     
-                    emit_memcpy_static(RDI, RSI, array_type->inner_type->size);
+                    emit_memcpy_static_bothdiscard(RDI, RSI, array_type->inner_type->size);
                 }
             }
             else
@@ -3279,17 +3285,17 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm64(RDX, loc);
+                    emit_mov_imm64(RSI, loc);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                 }
                 else
                 {
-                    emit_mov_imm64(RDX, expr->loc);
+                    emit_mov_imm64(RSI, expr->loc);
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
                 emit_lea(RAX, RBP, -var->val->loc);
-                emit_memcpy_static_bothdiscard(RAX, RDX, expr->type->size);
+                emit_memcpy_static_bothdiscard(RAX, RSI, expr->type->size);
             }
             else
             {
@@ -3309,6 +3315,7 @@ void compile_code(Node * ast, int want_ptr)
     {
         assert(eval_stack_height == 0);
         
+        // NOTE: these are not allowed to thrash RDX
         uint8_t simple_target = 0;
         if (nth_child(ast, 0)->first_child->type == LVAR_NAME)
             simple_target = 1;
@@ -3369,7 +3376,7 @@ void compile_code(Node * ast, int want_ptr)
                     CHECK_TYPE____KNR_INTERNAL_agig234iGG
                 }
                 
-                emit_pop_safe(RDI);
+                emit_pop_safe(RAX);
                 
                 if (expr->mem)
                 {
@@ -3383,7 +3390,7 @@ void compile_code(Node * ast, int want_ptr)
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
-                emit_memcpy_static(RDI, RSI, expr->type->size);
+                emit_memcpy_static_discard(RAX, RSI, expr->type->size);
             }
             else
             {
@@ -3401,11 +3408,11 @@ void compile_code(Node * ast, int want_ptr)
                 assert((ptrdiff_t)size + 8 == stack_offset);
                 
                 if (!simple_target)
-                    emit_mov_offset(RDX, RSP, size, 8);
+                    emit_mov_offset(RAX, RSP, size, 8);
                 else
-                    emit_pop_safe(RDX);
+                    emit_pop_safe(RAX);
                 
-                emit_memcpy_static_bothdiscard(RDX, RSP, expr->type->size);
+                emit_memcpy_static_bothdiscard(RAX, RSP, expr->type->size);
                 
                 if (!simple_target)
                     emit_shrink_stack_safe(size + 8);
@@ -3426,7 +3433,6 @@ void compile_code(Node * ast, int want_ptr)
             }
             
             emit_pop_safe(RAX); // destination location into RAX
-            
             emit_mov_into_offset_bothdiscard(RAX, RDX, 0, expr->type->size);
         }
         
@@ -4075,14 +4081,14 @@ void compile_code(Node * ast, int want_ptr)
                         else
                         {
                             // source location
-                            emit_pop_safe(RSI);
+                            emit_pop_safe(RAX);
                             // destination location
                             size_t aligned_size = type_stack_size(new_type);
                             emit_expand_stack_safe(aligned_size);
                             
                             if (val->val->type->is_volatile)
                                 emitter_log_flush();
-                            emit_memcpy_static_bothdiscard(RSP, RSI, new_type->size);
+                            emit_memcpy_static_bothdiscard(RSP, RAX, new_type->size);
                             if (val->val->type->is_volatile)
                                 emitter_log_flush();
                             
