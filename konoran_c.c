@@ -206,10 +206,11 @@ int main(int argc, char ** argv)
     int (*jit_main) (int, char**) = (int(*)(int, char**))(void *)(jit_code + funcinfo_main->offset);
 #pragma GCC diagnostic pop
     
-    printf("print_float: %zX\n", (uint64_t)print_float);
+    printf("print_float: 0x%zX\n", (uint64_t)print_float);
     
-    printf("jit_code: %zX\n", (uint64_t)jit_code);
-    printf("jit_startup: %zX\n", (uint64_t)jit_startup);
+    printf("jit_code: 0x%zX\n", (uint64_t)jit_code);
+    printf("jit_startup: 0x%zX\n", (uint64_t)jit_startup);
+    printf("jit code len: 0x%zX\n", (uint64_t)code->len);
     assert(jit_startup);
     
     puts("---- running program");

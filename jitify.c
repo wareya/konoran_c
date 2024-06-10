@@ -14,7 +14,7 @@ uint8_t * copy_as_executable(uint8_t * mem, size_t len)
     
     memcpy(buffer, mem, len);
     DWORD dummy;
-    VirtualProtect(buffer, len, PAGE_EXECUTE_READ, &dummy);
+    assert(VirtualProtect(buffer, len, PAGE_EXECUTE_READ, &dummy));
     
     puts("-- marked page as executable");
     

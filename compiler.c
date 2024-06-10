@@ -463,7 +463,8 @@ Type * make_array_type(Type * inner, uint64_t count)
     Type * outer = new_type("array", TYPE_ARRAY);
     outer->inner_type = inner;
     outer->inner_count = count;
-    size_t inner_size = guess_aligned_size_from_size(inner->size);
+    //size_t inner_size = guess_aligned_size_from_size(inner->size);
+    size_t inner_size = inner->size;
     outer->size = inner_size * count;
     
     list_add(&array_types, outer);
@@ -2282,7 +2283,7 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 else
                 {
-                    emit_mov_imm(RAX, var->val->loc, 8);
+                    emit_mov_imm64(RAX, var->val->loc ^ 0x50000000);
                     log_static_relocation(emitter_get_code_len() - 8, var->val->loc);
                     
                     emit_push_safe_discard(RAX);
@@ -2334,7 +2335,7 @@ void compile_code(Node * ast, int want_ptr)
             // FIXME aggregates
             assert(var->val->type->size <= 8);
             
-            emit_mov_imm64(RAX, var->val->loc);
+            emit_mov_imm64(RAX, var->val->loc ^ 0x50000000);
             
             if (var->val->kind == VAL_GLOBAL)
                 log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
@@ -2573,7 +2574,7 @@ void compile_code(Node * ast, int want_ptr)
                                 if (value->mem)
                                     loc = push_static_data(value->mem, value->type->size);
                                 
-                                emit_mov_imm64(RAX, loc);
+                                emit_mov_imm64(RAX, loc ^ 0x50000000);
                                 log_static_relocation(emitter_get_code_len() - 8, loc);
                             }
                             else
@@ -2706,6 +2707,8 @@ void compile_code(Node * ast, int want_ptr)
             } break;
             case ARRAYINDEX:
             {
+                // NOTE: not allowed to thrash RDX if the index is a literal
+                
                 Value * expr = stack_pop()->val;
                 Type * array_type = expr->type;
                 // Indexing sometimes has to operate on a value instead of a virtual pointer.
@@ -2728,7 +2731,8 @@ void compile_code(Node * ast, int want_ptr)
                 assert(("Array indexes must be i64s!", type_is_int(value->type) && type_is_signed(value->type) && value->type->size == 8));
                 
                 Type * inner_type = array_type->inner_type;
-                size_t inner_size = guess_aligned_size_from_size(inner_type->size);
+                //size_t inner_size = guess_aligned_size_from_size(inner_type->size);
+                size_t inner_size = inner_type->size;
                 
                 printf("--~~``-`-`-`_~109111~~``!~``031~#!) inner size %zu\n", inner_size);
                 
@@ -2742,14 +2746,9 @@ void compile_code(Node * ast, int want_ptr)
                     emit_pop_safe(RAX);
                     
                     if (!is_po2(inner_size))
-                    {
-                        emit_mov_imm(RDX, inner_size, 8);
-                        emit_imul(RDX, 8);
-                    }
+                        emit_mul_imm(RAX, RAX, inner_size, 8);
                     else
-                    {
                         emit_shl_imm(RAX, is_po2(inner_size)-1, 8);
-                    }
                 }
                 
                 // possible cases:
@@ -2774,9 +2773,9 @@ void compile_code(Node * ast, int want_ptr)
                 
                 if (want_ptr != 0 && !is_on_stack)
                 {
-                    emit_pop_safe(RDX);
-                    emit_add(RDX, RAX, 8);
-                    emit_push_safe_discard(RDX);
+                    emit_pop_safe(RCX);
+                    emit_add(RAX, RCX, 8);
+                    emit_push_safe_discard(RAX);
                     
                     stack_push_new_anywhere(make_ptr_type(inner_type));
                 }
@@ -2787,17 +2786,17 @@ void compile_code(Node * ast, int want_ptr)
                     if (is_on_stack)
                     {
                         emit_add(RAX, RSP, 8);
-                        emit_mov_reg_preg_discard(RDX, RAX, inner_type->size);
+                        emit_mov_reg_preg_discard(RAX, RAX, inner_type->size);
                         emit_shrink_stack_safe(array_size_stack);
-                        emit_push_safe_discard(RDX);
+                        emit_push_safe_discard(RAX);
                         
                         stack_push_new_top(inner_type);
                     }
                     else if (want_ptr == 0)
                     {
-                        emit_pop_safe(RDX);
-                        emit_add(RDX, RAX, 8);
-                        emit_mov_reg_preg_discard(RAX, RDX, inner_type->size);
+                        emit_pop_safe(RCX);
+                        emit_add(RAX, RCX, 8);
+                        emit_mov_reg_preg_discard(RAX, RAX, inner_type->size);
                         emit_push_safe_discard(RAX);
                         
                         stack_push_new_top(inner_type);
@@ -3039,7 +3038,7 @@ void compile_code(Node * ast, int want_ptr)
                 if (first->mem)
                     loc = push_static_data(first->mem, first->type->size);
                 
-                emit_mov_imm64(RSI, loc);
+                emit_mov_imm64(RSI, loc ^ 0x50000000);
                 log_static_relocation(emitter_get_code_len() - 8, loc);
                 
                 emit_memcpy_static_discard(RSP, RSI, array_type->inner_type->size);
@@ -3068,7 +3067,7 @@ void compile_code(Node * ast, int want_ptr)
                     if (next->mem)
                         loc = push_static_data(next->mem, next->type->size);
                     
-                    emit_mov_imm64(RSI, loc);
+                    emit_mov_imm64(RSI, loc ^ 0x50000000);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                     
                     emit_lea(RDI, RSP, inner_size * i);
@@ -3285,12 +3284,12 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm64(RSI, loc);
+                    emit_mov_imm64(RSI, loc ^ 0x50000000);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                 }
                 else
                 {
-                    emit_mov_imm64(RSI, expr->loc);
+                    emit_mov_imm64(RSI, expr->loc ^ 0x50000000);
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
@@ -3324,7 +3323,10 @@ void compile_code(Node * ast, int want_ptr)
             simple_target = 1;
             for (size_t i = 1; i < nth_child(ast, 0)->first_child->childcount; i += 1)
             {
-                if (nth_child(nth_child(ast, 0)->first_child, i)->type != INDIRECTION)
+                if (!(nth_child(nth_child(ast, 0)->first_child, i)->type == INDIRECTION ||
+                      (nth_child(nth_child(ast, 0)->first_child, i)->type == ARRAYINDEX &&
+                       nth_child(nth_child(ast, 0)->first_child, i)->first_child->type == INTEGER)
+                   ))
                 {
                     simple_target = 0;
                     break;
@@ -3381,12 +3383,12 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm64(RSI, loc);
+                    emit_mov_imm64(RSI, loc ^ 0x50000000);
                     log_static_relocation(emitter_get_code_len() - 8, loc);
                 }
                 else
                 {
-                    emit_mov_imm64(RSI, expr->loc);
+                    emit_mov_imm64(RSI, expr->loc ^ 0x50000000);
                     log_static_relocation(emitter_get_code_len() - 8, expr->loc);
                 }
                 
@@ -3983,7 +3985,7 @@ void compile_code(Node * ast, int want_ptr)
         {
             size_t loc = push_static_data((uint8_t *)output_str, j);
             
-            emit_mov_imm64(RAX, loc);
+            emit_mov_imm64(RAX, loc ^ 0x50000000);
             log_static_relocation(emitter_get_code_len() - 8, loc);
             emit_push_safe_discard(RAX);
             
@@ -4744,7 +4746,8 @@ void aggregate_type_recalc_size(Type * type)
         if (type_is_struct(inner) || type_is_array(inner))
             aggregate_type_recalc_size(inner);
         
-        size_t inner_size = guess_aligned_size_from_size(inner->size);
+        //size_t inner_size = guess_aligned_size_from_size(inner->size);
+        size_t inner_size = inner->size;
         type->size = inner_size * count;
         
         printf("!!!---!- recalculated array size as %zd\n", type->size);

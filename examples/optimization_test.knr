@@ -21,8 +21,10 @@ Vector3 vec3_sub_vec3(Vector3 a, Vector3 b)
 }
 export_extern void main()
 {
-    //Vector3 zero = Vector3 { 0.0f64, 0.0f64, 0.0f64 };
-    //Vector3 zero = Vector3 { 0.0f64 };
-    //zero = vec3_sub_vec3(zero, zero);
+    Vector3 zero = Vector3 { 0.0f64, 0.0f64, 0.0f64 };
+    zero = vec3_sub_vec3(zero, vec3_sub_vec3(zero, zero));
+    zero.x = 153.0f64;
+    Vector3 z = Vector3 { 0.0f64, 0.0f64, 0.0f64 };
+    zero = vec3_sub_vec3(zero, vec3_sub_vec3(z, zero));
     return;
 }
