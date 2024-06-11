@@ -2121,6 +2121,8 @@ void compile_code(Node * ast, int want_ptr)
                 }
             }
         }
+        if (type_is_composite(return_type))
+            emit_mov(RAX, R12, 8);
         
         printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
@@ -2554,12 +2556,12 @@ void compile_code(Node * ast, int want_ptr)
                             if (value->kind == VAL_STACK_BOTTOM)
                             {
                                 emit_lea(RAX, RBP, -value->loc);
-                                emit_push_safe(RAX);
+                                emit_push_safe_discard(RAX);
                             }
                             else if (value->kind == VAL_REDIRECTED)
                             {
                                 emit_mov(RAX, R12, 8);
-                                emit_push_safe(RAX);
+                                emit_push_safe_discard(RAX);
                             }
                             else if (value->kind == VAL_GLOBAL)
                             {
@@ -2594,7 +2596,7 @@ void compile_code(Node * ast, int want_ptr)
                             }
                             arg_storage_used += size;
                             assert(arg_storage_used <= arg_storage_size);
-                            emit_push_safe(RAX);
+                            emit_push_safe_discard(RAX);
                         }
                     }
                     else
