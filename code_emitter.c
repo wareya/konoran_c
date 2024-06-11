@@ -2797,6 +2797,16 @@ uint8_t emitter_log_try_optimize(void)
             emitter_log_erase_nth(0);
             return 1;
         }
+        
+        if ((   log_next->funcptr == (void *)_impl_emit_add_imm
+             || log_next->funcptr == (void *)_impl_emit_add_imm_discard
+             || log_next->funcptr == (void *)_impl_emit_sub_imm
+            ) &&
+            log_next->args[1] == 0)
+        {
+            emitter_log_erase_nth(0);
+            return 1;
+        }
     }
     if (emitter_log_size >= 2)
     {
@@ -2832,7 +2842,9 @@ uint8_t emitter_log_try_optimize(void)
             // between memcpy target and mov-offset source
             if (log_next->funcptr == (void *)_impl_emit_mov ||
                 log_next->funcptr == (void *)_impl_emit_mov_discard ||
-                (log_prev->args[0] == log_next->args[1] && log_prev->args[3] <= log_next->args[2]))
+                (log_prev->args[0] == log_next->args[1] &&
+                    log_prev->args[2] + log_prev->args[4] <= log_next->args[2]
+               ))
             {
                 EmitterLog * mov = emitter_log_erase_nth(0);
                 EmitterLog * memcpy = emitter_log_erase_nth(0);
@@ -2926,7 +2938,7 @@ uint8_t emitter_log_try_optimize(void)
         /////////////// others
         
         
-        /////////////// push-poop uptimizations
+        /////////////// push-pop optimizations
         
         
         // push-pop
@@ -3627,7 +3639,38 @@ uint8_t emitter_log_try_optimize(void)
             EmitterLog * lea = emitter_log_erase_nth(0);
             memcpy->args[1] = lea->args[1];
             memcpy->args[3] += lea->args[2];
-            printf("-- ~-`12- -` combining %zd and %zd\n", memcpy->args[3], lea->args[2]);
+            emitter_log_add(memcpy);
+            return 1;
+        }
+        
+        // add       rax, <imm>
+        // memcpy    rdi, rax, a, b, n
+        if (log_prev->funcptr == (void *)_impl_emit_add_imm_discard &&
+            (   log_next->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
+             || log_next->funcptr == (void *)_impl_emit_memcpy_static_discard
+            ) &&
+            log_prev->args[0] == log_next->args[1]
+            )
+        {
+            EmitterLog * memcpy = emitter_log_erase_nth(0);
+            EmitterLog * add = emitter_log_erase_nth(0);
+            memcpy->args[3] += add->args[1];
+            emitter_log_add(memcpy);
+            return 1;
+        }
+        
+        // add       rax, <imm>
+        // memcpy    rax, rsi, a, b, n
+        if (log_prev->funcptr == (void *)_impl_emit_add_imm_discard &&
+            (   log_next->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
+             || log_next->funcptr == (void *)_impl_emit_memcpy_static_discard
+            ) &&
+            log_prev->args[0] == log_next->args[0]
+            )
+        {
+            EmitterLog * memcpy = emitter_log_erase_nth(0);
+            EmitterLog * add = emitter_log_erase_nth(0);
+            memcpy->args[2] += add->args[1];
             emitter_log_add(memcpy);
             return 1;
         }
