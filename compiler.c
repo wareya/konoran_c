@@ -394,7 +394,7 @@ uint8_t type_is_array(Type * type)
 }
 uint8_t type_is_composite(Type * type)
 {
-    return type_is_struct(type) || type_is_array(type);
+    return type && (type_is_struct(type) || type_is_array(type));
 }
 
 uint8_t func_sigs_match(struct _FuncDef * a, struct _FuncDef * b);
@@ -2081,8 +2081,6 @@ void compile_code(Node * ast, int want_ptr)
     {
     case RETURN:
     {
-        printf("return A %zu\n", stack_offset);
-        
         if (!return_redir)
         {
             if (ast->first_child)
@@ -2098,18 +2096,6 @@ void compile_code(Node * ast, int want_ptr)
                 assert(types_same(return_type, val->type));
                 if (type_is_composite(return_type))
                 {
-                    Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
-                    assert(var);
-                    assert(("internal error: return slot variable for composite type return not found", var));
-                    if (var->val->kind != VAL_STACK_BOTTOM)
-                    {
-                        printf("actual kind %d\n", var->val->kind);
-                        assert(var->val->kind == VAL_STACK_BOTTOM);
-                    }
-                    printf("returning into pointer found at RBP minus %zd....\n", var->val->loc);
-                    
-                    emit_mov_offset(RAX, RBP, -var->val->loc, 8);
-                    
                     if (val->kind == VAL_CONSTANT)
                     {
                         assert(("TODO: const composite returns", 0));
@@ -2117,7 +2103,7 @@ void compile_code(Node * ast, int want_ptr)
                     else if (val->kind == VAL_STACK_TOP)
                     {
                         size_t size = guess_stack_size_from_size(val->type->size);
-                        emit_memcpy_static_discard(RAX, RSP, val->type->size);
+                        emit_memcpy_static_discard(R12, RSP, val->type->size);
                         emit_shrink_stack_safe(size);
                     }
                     else
@@ -2141,6 +2127,18 @@ void compile_code(Node * ast, int want_ptr)
         
         if (abi == ABI_WIN)
         {
+            if (type_is_composite(return_type))
+            {
+                emit_pop(R12);
+                emit_pop(RCX);
+            }
+            emit_pop(RSI);
+            emit_pop(RDI);
+        }
+        else if (abi == ABI_SYSV)
+        {
+            emit_pop(R12);
+            emit_pop(RCX);
             emit_pop(RSI);
             emit_pop(RDI);
         }
@@ -2296,7 +2294,7 @@ void compile_code(Node * ast, int want_ptr)
             {
                 type = make_ptr_type(type);
                 if (var->val->kind == VAL_REDIRECTED)
-                    emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                    emit_mov(RAX, R12, 8);
                 else
                     emit_lea(RAX, RBP, -var->val->loc);
                     
@@ -2319,7 +2317,7 @@ void compile_code(Node * ast, int want_ptr)
                     emit_expand_stack_safe(size);
                     
                     if (var->val->kind == VAL_REDIRECTED)
-                        emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                        emit_mov(RAX, R12, 8);
                     else
                         emit_lea(RAX, RBP, -var->val->loc);
                     
@@ -2402,7 +2400,7 @@ void compile_code(Node * ast, int want_ptr)
             }
             else if (var->val->kind == VAL_REDIRECTED)
             {
-                emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                emit_mov(RAX, R12, 8);
                 emit_push_safe_discard(RAX);
                 stack_push_new(var->val);
             }
@@ -2560,7 +2558,7 @@ void compile_code(Node * ast, int want_ptr)
                             }
                             else if (value->kind == VAL_REDIRECTED)
                             {
-                                emit_mov_offset(RAX, RBP, -value->loc, 8);
+                                emit_mov(RAX, R12, 8);
                                 emit_push_safe(RAX);
                             }
                             else if (value->kind == VAL_GLOBAL)
@@ -4392,66 +4390,35 @@ void compile_defs_compile(Node * ast)
         stack_loc = 0;
         local_vars = 0;
         
-        // need to push rdi, rsi (non-clobbered)
-        if (abi == ABI_WIN)
-            stack_loc += 16;
-        // need to push rdi, rsi, rcx (args)
-        else if (abi == ABI_SYSV)
-            stack_loc += 32;
-        
         return_type = funcdef->signature->item;
         GenericList * arg = funcdef->signature->next;
         GenericList * arg_name = funcdef->arg_names;
         
         // only worth doing for composite return types
         if (type_is_composite(return_type))
-        {
             compile_def_find_inplace_return(ast, &return_redir);
-        }
-        /*
-        if (type_is_composite(return_type))
-        {
-            if (return_redir == (char *)(int64_t)-1)
-                puts("-- `-1 -1`2 2-4`12-4 `124- did not find name (rejected)");
-            else if (return_redir)
-                printf("-- `-1 -1`2 2-4`12-4 `124- did we find the name? %s\n", return_redir);
-            else
-                puts("-- `-1 -1`2 2-4`12-4 `124- did not find name (none)");
-        }
-        */
+        
         if (return_redir == (char *)(int64_t)-1)
             return_redir = 0;
         
-        if (type_is_composite(return_type))
+        // need to push rdi, rsi (non-clobbered)
+        if (abi == ABI_WIN)
         {
-            Type * type = make_ptr_type(return_type);
-            size_t align = guess_alignment_from_size(type->size);
-            stack_loc += type->size;
-            while (stack_loc % align)
-                stack_loc++;
-            
-            Variable * var = add_local("___RETURN_POINTER_bzfkmje", type);
-            var->val->kind = VAL_STACK_BOTTOM;
-            var->val->loc = stack_loc;
+            stack_loc += 16;
+            if (type_is_composite(return_type))
+                stack_loc += 16;
         }
+        // need to push rdi, rsi, rcx (args)
+        else if (abi == ABI_SYSV)
+            stack_loc += 32;
         
         while (arg)
         {
             Type * type = arg->item;
             if (return_redir && strcmp(return_redir, arg_name->item) == 0)
             {
-                stack_loc += 8;
-                while (stack_loc % 8)
-                    stack_loc++;
-                
                 Variable * var = add_local(arg_name->item, type);
-                Variable * var_return = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
-                assert(var_return);
-                assert(var_return->val);
-                assert(var_return->val->loc);
-                
                 var->val->kind = VAL_REDIRECTED;
-                var->val->loc = var_return->val->loc;
             }
             else
             {
@@ -4470,6 +4437,8 @@ void compile_defs_compile(Node * ast)
         }
         //printf("--!!-!-- input loc %d\n", stack_loc);
         
+        emitter_inform_func_enter(name_text);
+        
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         
@@ -4478,14 +4447,20 @@ void compile_defs_compile(Node * ast)
         {
             emit_push(RDI);
             emit_push(RSI);
+            if (type_is_composite(return_type))
+            {
+                emit_push(RCX);
+                emit_push(R12);
+            }
         }
-        // need to push rdi, rsi, rcx (args). needs to be an even number of pushes, so might as well push RDX while we're at it.
+        // need to push rdi, rsi, rcx (args). needs to be an even number of pushes.
+        // we sometimes use R12 for the return address, so we push it too.
         else if (abi == ABI_SYSV)
         {
             emit_push(RDI);
             emit_push(RSI);
             emit_push(RCX);
-            emit_push(RDX);
+            emit_push(R12);
         }
         
         emit_sub_imm32(RSP, 0x7FFFFFFF);
@@ -4496,15 +4471,11 @@ void compile_defs_compile(Node * ast)
         
         if (type_is_composite(return_type))
         {
-            Variable * var = get_local("___RETURN_POINTER_bzfkmje", strlen("___RETURN_POINTER_bzfkmje"));
             int64_t where = abi_get_next(0);
             if (where > 0)
-                emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
+                emit_mov_discard(R12, where, 8);
             else
-            {
-                emit_mov_offset(RAX, RBP, -where, var->val->type->size);
-                emit_mov_into_offset_discard(RBP, RAX, -var->val->loc, var->val->type->size);
-            }
+                emit_mov_offset(R12, RBP, -where, 8);
         }
         
         arg = funcdef->signature->next;
@@ -4524,8 +4495,8 @@ void compile_defs_compile(Node * ast)
                         emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
                     else
                     {
-                        if (return_redir && strcmp(return_redir, arg_name->item) == 0)
-                            emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                        if (var->val->kind == VAL_REDIRECTED)
+                            emit_mov(RAX, R12, 8);
                         else
                             emit_lea(RAX, RBP, -var->val->loc);
                         if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
@@ -4560,8 +4531,8 @@ void compile_defs_compile(Node * ast)
                 else
                 {
                     emit_mov_offset(R10, RBP, -where, 8);
-                    if (return_redir && strcmp(return_redir, arg_name->item) == 0)
-                        emit_mov_offset(RAX, RBP, -var->val->loc, 8);
+                    if (var->val->kind == VAL_REDIRECTED)
+                        emit_mov(RAX, R12, 8);
                     else
                         emit_lea(RAX, RBP, -var->val->loc);
                     emit_memcpy_static_bothdiscard(RAX, R10, var->val->type->size);
@@ -4803,18 +4774,41 @@ void compile(Node * ast)
         
         // need to push rdi, rsi (non-clobbered)
         if (abi == ABI_WIN)
+        {
             stack_loc += 16;
+            if (type_is_composite(return_type))
+                stack_loc += 16;
+        }
         // need to push rdi, rsi, rcx (args)
         else if (abi == ABI_SYSV)
             stack_loc += 32;
         
+        emitter_inform_func_enter("(startup)");
+        
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
+        
+        // non-clobbered
         if (abi == ABI_WIN)
         {
             emit_push(RDI);
             emit_push(RSI);
+            if (type_is_composite(return_type))
+            {
+                emit_push(RCX);
+                emit_push(R12);
+            }
         }
+        // need to push rdi, rsi, rcx (args). needs to be an even number of pushes.
+        // we sometimes use R12 for the return address, so we push it too.
+        else if (abi == ABI_SYSV)
+        {
+            emit_push(RDI);
+            emit_push(RSI);
+            emit_push(RCX);
+            emit_push(R12);
+        }
+        
         emit_sub_imm32(RSP, 0x7FFFFFFF);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
@@ -4830,9 +4824,22 @@ void compile(Node * ast)
         
         if (abi == ABI_WIN)
         {
+            if (type_is_composite(return_type))
+            {
+                emit_pop(R12);
+                emit_pop(RCX);
+            }
             emit_pop(RSI);
             emit_pop(RDI);
         }
+        else if (abi == ABI_SYSV)
+        {
+            emit_pop(R12);
+            emit_pop(RCX);
+            emit_pop(RSI);
+            emit_pop(RDI);
+        }
+        
         emit_leave();
         emit_ret();
         

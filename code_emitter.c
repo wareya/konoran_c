@@ -2060,14 +2060,14 @@ void emit_push_val(int64_t val)
 
 // approximated as: y * (x/y - trunc(x/y))
 // clobbers RAX, RDX, RCX, RSI, flags, and:
-// for f32s, the highest two non-dest/source XMM registers (starting at 7, going down)
-// for f64s, the highest single non-dest/source XMM register (starting at 7, going down)
+// for f32s, the highest two non-dest/source XMM registers, starting at 5, going down
+// for f64s, the highest single non-dest/source XMM register, starting at 5, going down
 void emit_float_remainder(int reg_d, int reg_s, size_t size)
 {
     assert(size == 4 || size == 8);
     assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s >= XMM0 && reg_s <= XMM7);
     
-    int reg_temp = XMM7;
+    int reg_temp = XMM5;
     if (reg_temp == reg_s || reg_temp == reg_d)
         reg_temp -= 1;
     assert(reg_temp != reg_s && reg_temp != reg_d);
@@ -2444,6 +2444,13 @@ void emit_leave()
 
 FILE * logfile = 0;
 
+void emitter_inform_func_enter(char * name)
+{
+    if (!logfile)
+        logfile = fopen("emitterlog.txt", "w");
+    
+    fprintf(logfile, "\nfunc `%s` @ 0x%08zx:\n", name, code->len);
+}
 void emitter_log_apply(EmitterLog * log)
 {
     if (log->is_dead)
