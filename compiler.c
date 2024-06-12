@@ -1249,9 +1249,9 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             left->val->kind = VAL_STACK_TOP;
             
             if (op == '+')
-                emit_add(RAX, RDX, 8);
+                emit_add_discard(RAX, RDX, 8);
             else if (op == '-')
-                emit_add(RAX, RDX, 8);
+                emit_sub_discard(RAX, RDX, 8);
             else if (op == '&')
                 emit_and(RAX, RDX, 8);
             emit_push_safe_discard(RAX);
@@ -1482,12 +1482,12 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         
         if (op == '+')
         {
-            emit_add(RAX, RDX, size);
+            emit_add_discard(RAX, RDX, size);
             emit_push_safe_discard(RAX);
         }
         else if (op == '-')
         {
-            emit_sub(RAX, RDX, size);
+            emit_sub_discard(RAX, RDX, size);
             emit_push_safe_discard(RAX);
         }
         else if (op == '*' && int_signed)
@@ -2774,7 +2774,7 @@ void compile_code(Node * ast, int want_ptr)
                 if (want_ptr != 0 && !is_on_stack)
                 {
                     emit_pop_safe(RCX);
-                    emit_add(RAX, RCX, 8);
+                    emit_add_discard(RAX, RCX, 8);
                     emit_push_safe_discard(RAX);
                     
                     stack_push_new_anywhere(make_ptr_type(inner_type));
@@ -2795,7 +2795,7 @@ void compile_code(Node * ast, int want_ptr)
                     else if (want_ptr == 0)
                     {
                         emit_pop_safe(RCX);
-                        emit_add(RAX, RCX, 8);
+                        emit_add_discard(RAX, RCX, 8);
                         emit_mov_reg_preg_discard(RAX, RAX, inner_type->size);
                         emit_push_safe_discard(RAX);
                         
@@ -2828,7 +2828,7 @@ void compile_code(Node * ast, int want_ptr)
                     {
                         // on heap, expand stack and memcpy onto stack
                         emit_pop_safe(RSI);
-                        emit_add(RSI, RAX, 8);
+                        emit_add_discard(RSI, RAX, 8);
                         emit_expand_stack_safe(inner_size_stack);
                         
                         emit_memcpy_static_discard(RSP, RSI, inner_type->size);

@@ -712,6 +712,14 @@ void emit_add(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_add, reg_d, reg_s, size);
 }
+void _impl_emit_add_discard(int reg_d, int reg_s, size_t size)
+{
+    _impl_emit_add(reg_d, reg_s, size);
+}
+void emit_add_discard(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_add_discard, reg_d, reg_s, size);
+}
 //  ---
 void _impl_emit_sub(int reg_d, int reg_s, size_t size)
 {
@@ -720,6 +728,14 @@ void _impl_emit_sub(int reg_d, int reg_s, size_t size)
 void emit_sub(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_sub, reg_d, reg_s, size);
+}
+void _impl_emit_sub_discard(int reg_d, int reg_s, size_t size)
+{
+    _impl_emit_sub(reg_d, reg_s, size);
+}
+void emit_sub_discard(int reg_d, int reg_s, size_t size)
+{
+    emitter_log_add_3(_impl_emit_sub_discard, reg_d, reg_s, size);
 }
 //  ---
 void _impl_emit_cmp(int reg_d, int reg_s, size_t size)
@@ -770,6 +786,118 @@ void emit_or(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_or, reg_d, reg_s, size);
 }
+
+// uint8_t reg_byte = reg_s | (reg_d << 3);
+void _emit_addrblock(int reg_d, int reg_s, int64_t offset);
+
+// 48 01 45 00             add    QWORD PTR [rbp+0x0],rax
+// 48 01 00                add    QWORD PTR [rax],rax
+// 48 01 04 24             add    QWORD PTR [rsp],rax
+// 48 01 02                add    QWORD PTR [rdx],rax
+
+//  48 01 45 f0             add    QWORD PTR [rbp-0x10],rax
+//  48 83 45 f0 0f          add    QWORD PTR [rbp-0x10],0xf
+//  48 81 45 f0 98 3a 00 00 add    QWORD PTR [rbp-0x10],0x3a98
+//  48 83 45 f0 0f          add    QWORD PTR [rbp-0x10],0xf
+//  48 81 85 60 ff ff ff 98 3a 00 00   add    QWORD PTR [rbp-0xa0],0x3a98
+
+// 48 29 45 f0             sub    QWORD PTR [rbp-0x10],rax
+// 48 83 6d f0 0f          sub    QWORD PTR [rbp-0x10],0xf
+// 48 81 6d f0 98 3a 00 00 sub    QWORD PTR [rbp-0x10],0x3a98
+
+// 01 45 f0                add    DWORD PTR [rbp-0x10],eax
+// 83 45 f0 0f             add    DWORD PTR [rbp-0x10],0xf
+// 81 45 f0 98 3a 00 00    add    DWORD PTR [rbp-0x10],0x3a98
+// 29 45 f0                sub    DWORD PTR [rbp-0x10],eax
+// 83 6d f0 0f             sub    DWORD PTR [rbp-0x10],0xf
+// 81 6d f0 98 3a 00 00    sub    DWORD PTR [rbp-0x10],0x3a98
+
+// 66 01 45 f0             add    WORD PTR [rbp-0x10],ax
+// 66 83 45 f0 0f          add    WORD PTR [rbp-0x10],0xf
+// 66 81 45 f0 98 3a       add    WORD PTR [rbp-0x10],0x3a98
+// 66 29 45 f0             sub    WORD PTR [rbp-0x10],ax
+// 66 83 6d f0 0f          sub    WORD PTR [rbp-0x10],0xf
+// 66 81 6d f0 98 3a       sub    WORD PTR [rbp-0x10],0x3a98
+
+// 00 45 f0                add    BYTE PTR [rbp-0x10],al
+// 80 45 f0 0f             add    BYTE PTR [rbp-0x10],0xf
+// 80 45 f0 98             add    BYTE PTR [rbp-0x10],0x98
+// 28 45 f0                sub    BYTE PTR [rbp-0x10],al
+// 80 6d f0 0f             sub    BYTE PTR [rbp-0x10],0xf
+// 80 6d f0 98             sub    BYTE PTR [rbp-0x10],0x98
+
+void _emit_addlike_into_offset(int reg_d, int reg_s, int64_t offset, size_t size, uint8_t opcode)
+{
+    assert(reg_d <= R15 && reg_s <= R15);
+    last_is_terminator = 0;
+    
+    EMIT_LEN_PREFIX(reg_d, reg_s);
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, opcode + (size > 1));
+    _emit_addrblock(reg_s, reg_d, size);
+}
+void _impl_emit_add_into_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    _emit_addlike_into_offset(reg_d, reg_s, offset, size, 0x00);
+}
+void _impl_emit_sub_into_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    _emit_addlike_into_offset(reg_d, reg_s, offset, size, 0x28);
+}
+/*
+void emit_add_into_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    emiutter_log_add_4(_impl_emit_add_into_offset, reg_d, reg_s, offset, size);
+}
+void emit_sub_into_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    emiutter_log_add_4(_impl_emit_sub_into_offset, reg_d, reg_s, offset, size);
+}
+*/
+
+
+void _emit_addlike_imm_into_offset(int reg_d, uint8_t s_code, int64_t imm, int64_t offset, size_t size, uint8_t opcode)
+{
+    assert(imm >= -2147483648 && imm <= 2147483647);
+    assert(reg_d <= R15);
+    last_is_terminator = 0;
+    
+    EMIT_LEN_PREFIX(reg_d, 0);
+    reg_d &= 7;
+    
+    if (imm >= -128 && imm <= 127 && size > 1)
+    {
+        byte_push(code, opcode + 3);
+        _emit_addrblock(s_code, reg_d, size);
+    }
+    else
+    {
+        byte_push(code, opcode + (size > 1));
+        _emit_addrblock(s_code, reg_d, size);
+    }
+}
+void _impl_emit_add_imm_into_offset(int reg_d, int64_t imm, int64_t offset, size_t size)
+{
+    _emit_addlike_imm_into_offset(reg_d, 0, imm, offset, size, 0x80);
+}
+void _impl_emit_sub_imm_into_offset(int reg_d, int64_t imm, int64_t offset, size_t size)
+{
+    _emit_addlike_imm_into_offset(reg_d, 5, imm, offset, size, 0x80);
+}
+/*
+void emit_add_imm_into_offset(int reg_d, int64_t imm, int64_t offset, size_t size)
+{
+    emitter_log_add_4(_impl_emit_add_imm_into_offset, reg_d, imm, offset, size);
+}
+void emit_sub_imm_into_offset(int reg_d, int64_t imm, int64_t offset, size_t size)
+{
+    emitter_log_add_4(_impl_emit_sub_imm_into_offset, reg_d, imm, offset, size);
+}
+*/
+
+
 // ---
 void _emit_mullike(int reg, size_t size, uint8_t maskee)
 {
@@ -1537,8 +1665,6 @@ void emit_mov_xmm_xmm_discard(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_mov_xmm_xmm_discard, reg_d, reg_s, size);
 }
-
-void _emit_addrblock(int reg_d, int reg_s, int64_t offset);
 
 void _impl_emit_mov_xmm_from_offset(int reg_d, int reg_s, int64_t offset, size_t size)
 {
@@ -2504,6 +2630,12 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_sub)
         _impl_emit_sub(log->args[0], log->args[1], log->args[2]);
     
+    else if (log->funcptr == (void *)_impl_emit_add_discard)
+        _impl_emit_add_discard(log->args[0], log->args[1], log->args[2]);
+    
+    else if (log->funcptr == (void *)_impl_emit_sub_discard)
+        _impl_emit_sub_discard(log->args[0], log->args[1], log->args[2]);
+    
     else if (log->funcptr == (void *)_impl_emit_cmp)
         _impl_emit_cmp(log->args[0], log->args[1], log->args[2]);
     
@@ -2816,44 +2948,6 @@ uint8_t emitter_log_try_optimize(void)
         //////// optimizations that have caused miscompilations in previous incarnations
         //////// collected together here for easier debugging
         
-        // swap for more effective optimization
-        if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
-             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
-             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
-            ) &&
-            (   log_next->funcptr == (void *)_impl_emit_mov
-             || log_next->funcptr == (void *)_impl_emit_mov_discard
-             || log_next->funcptr == (void *)_impl_emit_mov_offset
-             || log_next->funcptr == (void *)_impl_emit_mov_offset_discard
-            ) &&
-            log_prev->args[0] != log_next->args[0] &&
-            log_prev->args[1] != log_next->args[0] &&
-            
-            log_next->args[0] != RSP &&
-            log_next->args[0] != RCX && log_prev->args[0] != RCX &&
-            log_next->args[0] != RDI &&
-            log_next->args[0] != RSI &&
-            log_next->args[1] != RCX && log_prev->args[1] != RCX &&
-            log_next->args[1] != RDI &&
-            log_next->args[1] != RSI
-            )
-        {
-            // this reorder is only safe if we know there's no overlap
-            // between memcpy target and mov-offset source
-            if (log_next->funcptr == (void *)_impl_emit_mov ||
-                log_next->funcptr == (void *)_impl_emit_mov_discard ||
-                (log_prev->args[0] == log_next->args[1] &&
-                    log_prev->args[2] + log_prev->args[4] <= log_next->args[2]
-               ))
-            {
-                EmitterLog * mov = emitter_log_erase_nth(0);
-                EmitterLog * memcpy = emitter_log_erase_nth(0);
-                emitter_log_add(mov);
-                emitter_log_add(memcpy);
-                return 1;
-            }
-        }
-        
         // consecutive movs into the same register (can be created by other optimizations)
         if (!log_prev->is_dead && !log_next->is_dead && // don't want to outright delete if one of them won't get emitted anyway
             (   log_prev->funcptr == (void *)_impl_emit_mov
@@ -3126,6 +3220,12 @@ uint8_t emitter_log_try_optimize(void)
                   || log_next->funcptr == (void *)_impl_emit_xmm_push_discard
                   || log_next->funcptr == (void *)_impl_emit_lea_fused_push
                   
+                  || log_next->funcptr == (void *)_impl_emit_lea
+                  || log_next->funcptr == (void *)_impl_emit_mov_offset
+                  || log_next->funcptr == (void *)_impl_emit_mov_offset_discard
+                  
+                  || log_next->funcptr == (void *)_impl_emit_call
+                  
                   || log_next->funcptr == (void *)_impl_emit_pop
                   || log_next->funcptr == (void *)_impl_emit_xmm_pop
                   
@@ -3140,8 +3240,35 @@ uint8_t emitter_log_try_optimize(void)
             emitter_log_add(sub);
             return 1;
         }
+        /*
+        if (!(   log_next->funcptr == (void *)_impl_emit_push
+              || log_next->funcptr == (void *)_impl_emit_push_discard
+              || log_next->funcptr == (void *)_impl_emit_push_offset
+              || log_next->funcptr == (void *)_impl_emit_push_offset_discard
+              || log_next->funcptr == (void *)_impl_emit_push_val
+              || log_next->funcptr == (void *)_impl_emit_xmm_push
+              || log_next->funcptr == (void *)_impl_emit_xmm_push_discard
+              || log_next->funcptr == (void *)_impl_emit_lea_fused_push
+              
+              || log_next->funcptr == (void *)_impl_emit_pop
+              || log_next->funcptr == (void *)_impl_emit_xmm_pop
+              
+              || log_next->funcptr == (void *)_impl_emit_sub_imm
+              || log_next->funcptr == (void *)_impl_emit_add_imm
+            ) && log_next->funcptr == (void *)_impl_emit_add_imm
+            && log_next->args[0] == RSP
+            && log_prev->args[0] != RSP
+            && log_prev->args[1] != RSP
+           )
+        {
+            EmitterLog * add = emitter_log_erase_nth(0);
+            EmitterLog * next = emitter_log_erase_nth(0);
+            emitter_log_add(add);
+            emitter_log_add(next);
+            return 1;
+        }
+        */
         
-        //// NOT IT
         // swap mov; pop to pop; mov for more effective optimization
         if ((   log_prev->funcptr == (void *)_impl_emit_mov
              || log_prev->funcptr == (void *)_impl_emit_mov_discard
@@ -3159,7 +3286,9 @@ uint8_t emitter_log_try_optimize(void)
              || log_prev->funcptr == (void *)_impl_emit_mov_imm
              || log_prev->funcptr == (void *)_impl_emit_shl
              || log_prev->funcptr == (void *)_impl_emit_add
+             || log_prev->funcptr == (void *)_impl_emit_add_discard
              || log_prev->funcptr == (void *)_impl_emit_sub
+             || log_prev->funcptr == (void *)_impl_emit_sub_discard
              || log_prev->funcptr == (void *)_impl_emit_shl_imm
              || log_prev->funcptr == (void *)_impl_emit_add_imm
              || log_prev->funcptr == (void *)_impl_emit_sub_imm
@@ -3173,7 +3302,6 @@ uint8_t emitter_log_try_optimize(void)
             ) &&
             (   log_next->funcptr == (void *)_impl_emit_pop
              || log_next->funcptr == (void *)_impl_emit_xmm_pop
-             //|| log_next->funcptr == (void *)_impl_emit_lea
             ) &&
             log_prev->args[0] != log_next->args[0] &&
             log_prev->args[0] != RSP &&
@@ -3202,18 +3330,38 @@ uint8_t emitter_log_try_optimize(void)
                 }
             }
         }
+        // swap lea; pop to pop; lea for more effective optimization
+        if ((   log_prev->funcptr == (void *)_impl_emit_lea
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_pop
+             || log_next->funcptr == (void *)_impl_emit_xmm_pop
+            ) &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[1] != log_next->args[0] &&
+            log_prev->args[0] != RSP &&
+            log_next->args[0] != RSP)
+        {
+            EmitterLog * pop = emitter_log_erase_nth(0);
+            EmitterLog * lea = emitter_log_erase_nth(0);
+            if (lea->args[1] == RSP)
+                lea->args[2] -= 8;
+            emitter_log_add(pop);
+            emitter_log_add(lea);
+            return 1;
+        }
         
         // swap for more effective optimization
         if ((   log_prev->funcptr == (void *)_impl_emit_push
              || log_prev->funcptr == (void *)_impl_emit_push_discard
+             || log_prev->funcptr == (void *)_impl_emit_push_val
              || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_base
              || log_prev->funcptr == (void *)_impl_emit_mov_base_from_xmm
              || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_base_discard
              || log_prev->funcptr == (void *)_impl_emit_mov_base_from_xmm_discard
              || log_prev->funcptr == (void *)_impl_emit_push_offset
              || log_prev->funcptr == (void *)_impl_emit_push_offset_discard
-             || log_prev->funcptr == (void *)_impl_emit_xmm_push
-             || log_prev->funcptr == (void *)_impl_emit_xmm_push_discard
+             //|| log_prev->funcptr == (void *)_impl_emit_xmm_push
+             //|| log_prev->funcptr == (void *)_impl_emit_xmm_push_discard
              || log_prev->funcptr == (void *)_impl_emit_lea_fused_push
             ) &&
             (   log_next->funcptr == (void *)_impl_emit_mov
@@ -3227,7 +3375,9 @@ uint8_t emitter_log_try_optimize(void)
              || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
              || log_next->funcptr == (void *)_impl_emit_mov_imm
              || log_next->funcptr == (void *)_impl_emit_add
+             || log_next->funcptr == (void *)_impl_emit_add_discard
              || log_next->funcptr == (void *)_impl_emit_sub
+             || log_next->funcptr == (void *)_impl_emit_sub_discard
              || log_next->funcptr == (void *)_impl_emit_float_add
              || log_next->funcptr == (void *)_impl_emit_float_sub
              || log_next->funcptr == (void *)_impl_emit_float_mul
@@ -3244,6 +3394,7 @@ uint8_t emitter_log_try_optimize(void)
                 log_prev->funcptr == (void *)_impl_emit_lea_fused_push ||
                 log_prev->funcptr == (void *)_impl_emit_xmm_push ||
                 log_prev->funcptr == (void *)_impl_emit_xmm_push_discard ||
+                log_prev->funcptr == (void *)_impl_emit_push_val ||
                 log_prev->funcptr == (void *)_impl_emit_push ||
                 log_prev->funcptr == (void *)_impl_emit_push_discard
             );
@@ -3261,9 +3412,11 @@ uint8_t emitter_log_try_optimize(void)
         if ((   log_prev->funcptr == (void *)_impl_emit_lea
             ) &&
             (   log_next->funcptr == (void *)_impl_emit_add
+             || log_next->funcptr == (void *)_impl_emit_add_discard
              || log_next->funcptr == (void *)_impl_emit_add_imm
              || log_next->funcptr == (void *)_impl_emit_add_imm32
              || log_next->funcptr == (void *)_impl_emit_sub
+             || log_next->funcptr == (void *)_impl_emit_sub_discard
              || log_next->funcptr == (void *)_impl_emit_sub_imm
              || log_next->funcptr == (void *)_impl_emit_sub_imm32
             ) &&
@@ -3324,6 +3477,25 @@ uint8_t emitter_log_try_optimize(void)
             return 1;
         }
         
+        /*
+        // swap for more effective optimization
+        if ((   log_prev->funcptr == (void *)_impl_emit_lea
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov_offset
+             || log_next->funcptr == (void *)_impl_emit_mov_offset_discard
+            ) &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[0] != log_next->args[1]
+            )
+        {
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            EmitterLog * lea = emitter_log_erase_nth(0);
+            emitter_log_add(mov);
+            emitter_log_add(lea);
+            return 1;
+        }
+        */
+        
         // swap for more effective optimization
         if ((   log_prev->funcptr == (void *)_impl_emit_mov_offset
              || log_prev->funcptr == (void *)_impl_emit_mov_offset_discard
@@ -3379,16 +3551,81 @@ uint8_t emitter_log_try_optimize(void)
              || log_next->funcptr == (void *)_impl_emit_mov_into_offset_bothdiscard
             ) &&
             log_prev->args[0] == log_next->args[1] &&
-            log_prev->args[2] <= log_next->args[3])
+            log_prev->args[2] == log_next->args[3])
         {
             if (log_prev->args[0] == log_next->args[1])
             {
                 EmitterLog * mov = emitter_log_erase_nth(0);
                 EmitterLog * movxmm = emitter_log_erase_nth(0);
                 // int reg_d, int reg_s, int64_t offset, size_t size
-                emitter_log_add_4_noopt(_impl_emit_mov_offset_from_xmm, mov->args[0], movxmm->args[1], mov->args[2], mov->args[3]);
+                if (log_prev->funcptr == (void *)_impl_emit_mov_base_from_xmm_discard)
+                    emitter_log_add_4_noopt(_impl_emit_mov_offset_from_xmm_discard, mov->args[0], movxmm->args[1], mov->args[2], mov->args[3]);
+                else
+                    emitter_log_add_4_noopt(_impl_emit_mov_offset_from_xmm, mov->args[0], movxmm->args[1], mov->args[2], mov->args[3]);
                 return 1;
             }
+        }
+        
+        
+        // mov    rax,rdx
+        // mov    QWORD PTR [rbp-0x48],rax
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov
+             || log_prev->funcptr == (void *)_impl_emit_mov_discard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov_into_offset_discard
+             || log_next->funcptr == (void *)_impl_emit_mov_into_offset_bothdiscard
+            ) &&
+            log_prev->args[0] == log_next->args[1] &&
+            log_prev->args[2] == log_next->args[3])
+        {
+            if (log_prev->args[0] == log_next->args[1])
+            {
+                EmitterLog * store = emitter_log_erase_nth(0);
+                EmitterLog * mov = emitter_log_erase_nth(0);
+                // int reg_d, int reg_s, int64_t offset, size_t size
+                if (log_prev->funcptr == (void *)_impl_emit_mov_discard)
+                    emitter_log_add_4_noopt(_impl_emit_mov_into_offset_discard, store->args[0], mov->args[1], store->args[2], store->args[3]);
+                else
+                    emitter_log_add_4_noopt(_impl_emit_mov_into_offset, store->args[0], mov->args[1], store->args[2], store->args[3]);
+                return 1;
+            }
+        }
+        
+        
+        // mov    QWORD PTR [rbp-0x48], rax
+        // mov    rax, QWORD PTR [rbp-0x48]
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov_into_offset
+             || log_prev->funcptr == (void *)_impl_emit_mov_into_offset_discard
+             || log_prev->funcptr == (void *)_impl_emit_mov_into_offset_bothdiscard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov_offset
+             || log_next->funcptr == (void *)_impl_emit_mov_offset_discard
+            ) &&
+            log_prev->args[1] == log_next->args[0] &&
+            log_prev->args[2] == log_next->args[2] &&
+            log_prev->args[3] == log_next->args[3]
+            )
+        {
+            emitter_log_erase_nth(0);
+            return 1;
+        }
+        
+        
+        // movq    QWORD PTR [rbp-0x48], xmm0
+        // movq    xmm0, QWORD PTR [rbp-0x48]
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov_offset_from_xmm
+             || log_prev->funcptr == (void *)_impl_emit_mov_offset_from_xmm_discard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset
+             || log_next->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+            ) &&
+            log_prev->args[1] == log_next->args[0] &&
+            log_prev->args[2] == log_next->args[2] &&
+            log_prev->args[3] == log_next->args[3]
+            )
+        {
+            emitter_log_erase_nth(0);
+            return 1;
         }
         
         // mov    rax,QWORD PTR [rbp-0x28]
@@ -3512,7 +3749,7 @@ uint8_t emitter_log_try_optimize(void)
         
         // add    rdx, rax
         // mov    rax, rdx
-        if (log_prev->funcptr == (void *)_impl_emit_add &&
+        if ((log_prev->funcptr == (void *)_impl_emit_add || log_prev->funcptr == (void *)_impl_emit_add_discard) &&
             log_next->funcptr == (void *)_impl_emit_mov_discard &&
             log_prev->args[0] == log_next->args[1] &&
             log_prev->args[1] == log_next->args[0] && 
@@ -3528,7 +3765,6 @@ uint8_t emitter_log_try_optimize(void)
         }
         
         // addf    rdx, rax
-        // mulf    rdx, rax
         // movf    rax, rdx
         if ((  log_prev->funcptr == (void *)_impl_emit_float_add
             || log_prev->funcptr == (void *)_impl_emit_float_mul
@@ -3705,7 +3941,9 @@ uint8_t emitter_log_try_optimize(void)
              log_prev->funcptr == (void *)_impl_emit_add_imm_discard ||
              log_prev->funcptr == (void *)_impl_emit_sub_imm ||
              log_prev->funcptr == (void *)_impl_emit_add ||
-             log_prev->funcptr == (void *)_impl_emit_sub) &&
+             log_prev->funcptr == (void *)_impl_emit_add_discard ||
+             log_prev->funcptr == (void *)_impl_emit_sub ||
+             log_prev->funcptr == (void *)_impl_emit_sub_discard) &&
             log_next->funcptr == (void *)_impl_emit_leave &&
             log_prev->args[0] == RSP)
         {
@@ -3713,7 +3951,6 @@ uint8_t emitter_log_try_optimize(void)
             return 1;
         }
         
-        //// NOT IT
         // combine sub/add operations on the same register
         if ((log_prev->funcptr == (void *)_impl_emit_sub_imm || log_prev->funcptr == (void *)_impl_emit_add_imm || log_prev->funcptr == (void *)_impl_emit_add_imm_discard) &&
             (log_next->funcptr == (void *)_impl_emit_sub_imm || log_next->funcptr == (void *)_impl_emit_add_imm || log_next->funcptr == (void *)_impl_emit_add_imm) &&
@@ -3755,6 +3992,83 @@ uint8_t emitter_log_try_optimize(void)
             }
         }
     }
+    if (emitter_log_size >= 3)
+    {
+        EmitterLog * log_prev = emitter_log_get_nth(2);
+        EmitterLog * log_next = emitter_log_get_nth(1);
+        EmitterLog * log_nexter = emitter_log_get_nth(0);
+        
+        /*
+        // combine load-modify-store cycles
+        //                   mov_offset    0, 5, -200, 8
+        //                          add    2, 0, 8
+        //  mov_into_offset_bothdiscard    5, 2, -200, 8
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov_offset
+             || log_prev->funcptr == (void *)_impl_emit_mov_offset_discard ) &&
+            (   log_next->funcptr == (void *)_impl_emit_add
+             || log_next->funcptr == (void *)_impl_emit_add_imm
+             || log_next->funcptr == (void *)_impl_emit_add_imm_discard
+             || log_next->funcptr == (void *)_impl_emit_sub
+             || log_next->funcptr == (void *)_impl_emit_sub_imm ) &&
+            (   log_nexter->funcptr == (void *)_impl_emit_mov_into_offset_bothdiscard
+             || log_nexter->funcptr == (void *)_impl_emit_mov_into_offset_discard )
+            (log_prev->args[0] == log_next->args[0] || log_prev->args[0] == log_next->args[1]) &&
+            (log_nexter->args[1] == log_next->args[0] || log_nexter->args[1] == log_next->args[1]) &&
+            log_prev->args[2] == log_nexter->args[2] // offset
+            log_prev->args[3] == log_nexter->args[3] // size
+            log_prev->args[3] == log_next->args[2] // size
+            )
+        {
+            EmitterLog * store = emitter_log_erase_nth(0);
+            EmitterLog * op = emitter_log_erase_nth(0);
+            EmitterLog * load = emitter_log_erase_nth(0);
+            
+            
+        }
+        */
+        
+        // swap prev and next for more effective optimization
+        // this *just* needs to run after the mov has already had any possible optimizations applied to it
+        if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
+             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_discard
+             || log_prev->funcptr == (void *)_impl_emit_memcpy_static_bothdiscard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_mov
+             || log_next->funcptr == (void *)_impl_emit_mov_discard
+             || log_next->funcptr == (void *)_impl_emit_mov_offset
+             || log_next->funcptr == (void *)_impl_emit_mov_offset_discard
+            ) &&
+            log_prev->args[0] != log_next->args[0] &&
+            log_prev->args[1] != log_next->args[0] &&
+            
+            log_next->args[0] != RSP &&
+            log_next->args[0] != RCX && log_prev->args[0] != RCX &&
+            log_next->args[0] != RDI &&
+            log_next->args[0] != RSI &&
+            log_next->args[1] != RCX && log_prev->args[1] != RCX &&
+            log_next->args[1] != RDI &&
+            log_next->args[1] != RSI
+            )
+        {
+            // this reorder is only safe if we know there's no overlap
+            // between memcpy target and mov-offset source
+            if (log_next->funcptr == (void *)_impl_emit_mov ||
+                log_next->funcptr == (void *)_impl_emit_mov_discard ||
+                (log_prev->args[0] == log_next->args[1] &&
+                    log_prev->args[2] + log_prev->args[4] <= log_next->args[2]
+               ))
+            {
+                EmitterLog * nexter = emitter_log_erase_nth(0);
+                EmitterLog * mov = emitter_log_erase_nth(0);
+                EmitterLog * memcpy = emitter_log_erase_nth(0);
+                emitter_log_add(mov);
+                emitter_log_add(memcpy);
+                emitter_log_add(nexter);
+                return 1;
+            }
+        }
+    }
+        
     return 0;
 }
 
