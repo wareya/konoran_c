@@ -1193,7 +1193,7 @@ void emit_xmm_pop_safe(int reg1, int size)
 
 void emit_expand_stack_safe(int64_t amount)
 {
-    printf("expanding stack by %zu\n", amount);
+    //printf("expanding stack by %zu\n", amount);
     assert(amount >= 0 && amount <= 2147483647);
     emit_sub_imm(RSP, amount);
     stack_offset += amount;
@@ -1201,7 +1201,7 @@ void emit_expand_stack_safe(int64_t amount)
 void emit_shrink_stack_safe(int64_t amount)
 {
     printf("shrinking stack by %zu\n", amount);
-    //printf("%zu vs %zu\n", stack_offset, amount);
+    printf("%zu vs %zu\n", stack_offset, amount);
     assert(stack_offset >= amount);
     assert(amount >= 0 && amount <= 2147483647);
     emit_add_imm(RSP, amount);
@@ -2072,7 +2072,7 @@ void compile_unary_bitnot(StackItem * val)
 Type * return_type = 0;
 FuncDef * current_funcdef = 0;
 char * return_redir = 0;
-
+Node * hoistable_return = 0;
 void compile_code(Node * ast, int want_ptr)
 {
     //printf("code len before token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
@@ -2430,6 +2430,9 @@ void compile_code(Node * ast, int want_ptr)
     } break;
     case RHUNEXPR:
     {
+        Node * hoistable = hoistable_return;
+        hoistable_return = 0;
+        
         printf("before %zu\n", stack_offset);
         compile_code(nth_child(ast, 0), WANT_PTR_VIRTUAL);
         size_t i = 1;
@@ -2440,6 +2443,7 @@ void compile_code(Node * ast, int want_ptr)
         while (next)
         {
             want_ptr = nth_child(ast, i + 1) ? WANT_PTR_VIRTUAL : old_want_ptr;
+            uint8_t is_last = !next->next_sibling;
             switch (next->type)
             {
             case FUNCARGS:
@@ -2456,6 +2460,8 @@ void compile_code(Node * ast, int want_ptr)
                 Type * callee_return_type = funcdef->signature->item;
                 GenericList * arg = funcdef->signature->next;
                 
+                uint8_t hoisted = is_last && hoistable && type_is_composite(callee_return_type);
+                
                 // for composite returns
                 int64_t return_slot_size = 0;
                 // for aggregates, which are passed by pointer
@@ -2470,10 +2476,13 @@ void compile_code(Node * ast, int want_ptr)
                 int64_t return_where = 0;
                 if (type_is_composite(callee_return_type))
                 {
-                    emit_pop_safe(RAX);
-                    return_slot_size = guess_stack_size_from_size(callee_return_type->size);
-                    emit_expand_stack_safe(return_slot_size);
-                    emit_push_safe_discard(RAX);
+                    if (!hoisted)
+                    {
+                        emit_pop_safe(RAX);
+                        return_slot_size = guess_stack_size_from_size(callee_return_type->size);
+                        emit_expand_stack_safe(return_slot_size);
+                        emit_push_safe_discard(RAX);
+                    }
                     
                     return_where = abi_get_next(0);
                     
@@ -2612,10 +2621,8 @@ void compile_code(Node * ast, int want_ptr)
                 
                 // arg movement
                 
-                if (type_is_composite(callee_return_type))
+                if (type_is_composite(callee_return_type) && !hoisted)
                 {
-                    size_t size = type_stack_size(callee_return_type);
-                    
                     int64_t where = return_where;
                     //printf("!!19519 5   3#)!951910 return location %zX ----!!!513\n", return_where);
                     if (where >= 0)
@@ -2659,6 +2666,26 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 assert(temp_used == 0);
                 
+                if (type_is_composite(callee_return_type) && hoisted)
+                {
+                    Value * arg_expr = 0;
+                    
+                    compile_code(hoistable, 1);
+                    StackItem * item = stack_pop();
+                    Value * expr = item->val;
+                    assert(types_same(expr->type, callee_return_type));
+                    
+                    int64_t where = return_where;
+                    if (where >= 0)
+                    {
+                        emit_pop_safe(where);
+                    }
+                    else
+                    {
+                        assert(("TODO: not yet supported: return slot is passed on stack", 0));
+                    }
+                    hoistable_return = hoistable;
+                }
                 // call
                 
                 //#define DO_CALL_STACK_VERIFY_AT_RUNTIME
@@ -2696,9 +2723,18 @@ void compile_code(Node * ast, int want_ptr)
                         emit_push_safe_discard(RAX);
                 }
                 // push return val type
-                Value * value = new_value(callee_return_type);
-                value->kind = VAL_STACK_TOP;
-                stack_push_new(value);
+                if (!hoisted)
+                {
+                    Value * value = new_value(callee_return_type);
+                    value->kind = VAL_STACK_TOP;
+                    stack_push_new(value);
+                }
+                else
+                {
+                    Value * value = new_value(get_type("void"));
+                    value->kind = VAL_STACK_TOP;
+                    stack_push_new(value);
+                }
                 
                 //assert(stack_offset == stack_offset_at_funcptr);
                 
@@ -3333,7 +3369,16 @@ void compile_code(Node * ast, int want_ptr)
                 }
             }
         }
-        //printf("-1!!!!-1-`-`1-1-` -`! _~! -`1 -`- `     %d\n", nth_child(ast, 0)->first_child->type);
+        
+        // Some expressions (e.g. function calls returning structs) evaluate by copying into a return slot.
+        // If the assignment target is simple, these expressions can inject the assignment target in place
+        //  of building a return slot and doing another memcpy on assignment.
+        // If the expression does this, it leaves the global variable hoistable_return set to the target variable.
+        // If it doesn't do this, it sets it back to 0.
+        // This can only happen if the type is a composite (struct/array).
+        hoistable_return = 0;
+        if (simple_target && nth_child(ast, 1)->type == RHUNEXPR && nth_child(nth_child(ast, 1), nth_child(ast, 1)->childcount - 1)->type == FUNCARGS)
+            hoistable_return = nth_child(ast, 0);
         
         Value * target = 0;
         
@@ -3367,7 +3412,7 @@ void compile_code(Node * ast, int want_ptr)
         if (target)
             CHECK_TYPE____KNR_INTERNAL_agig234iGG
         
-        if (type_is_composite(expr->type))
+        if (type_is_composite(expr->type) && !hoistable_return)
         {
             if (expr->kind == VAL_CONSTANT)
             {
@@ -3422,7 +3467,7 @@ void compile_code(Node * ast, int want_ptr)
                     emit_shrink_stack_safe(size);
             }
         }
-        else
+        else if (!hoistable_return)
         {
             _push_small_if_const(expr);
             emit_pop_safe(RDX); // value into RDX
@@ -3437,6 +3482,8 @@ void compile_code(Node * ast, int want_ptr)
             emit_pop_safe(RAX); // destination location into RAX
             emit_mov_into_offset_bothdiscard(RAX, RDX, 0, expr->type->size);
         }
+        
+        hoistable_return = 0;
         
         #undef CHECK_TYPE____KNR_INTERNAL_agig234iGG
     } break;
