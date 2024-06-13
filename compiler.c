@@ -1601,22 +1601,22 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
         
         if (op == '+')
         {
-            emit_float_add(XMM0, XMM1, size);
+            emit_float_add_discard(XMM0, XMM1, size);
             emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '-')
         {
-            emit_float_sub(XMM0, XMM1, size);
+            emit_float_sub_discard(XMM0, XMM1, size);
             emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '*')
         {
-            emit_float_mul(XMM0, XMM1, size);
+            emit_float_mul_discard(XMM0, XMM1, size);
             emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '/')
         {
-            emit_float_div(XMM0, XMM1, size);
+            emit_float_div_discard(XMM0, XMM1, size);
             emit_xmm_push_safe_discard(XMM0, size);
         }
         else if (op == '%')
@@ -4900,7 +4900,18 @@ void compile(Node * ast)
         while (next)
         {
             while (emitter_get_code_len() % 16)
-                emit_nop(1);
+            {
+                if (1)
+                {
+                    int n = 8 - (emitter_get_code_len() % 8);
+                    if (n == 0)
+                        n = 16 - (emitter_get_code_len() % 16);
+                    n = n > 8 ? 8 : n;
+                    emit_nop(n);
+                }
+                else
+                    emit_nop(1);
+            }
             
             compile_defs_compile(next);
             next = next->next_sibling;
