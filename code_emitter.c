@@ -732,9 +732,9 @@ void emit_add_imm32(int reg, int64_t val)
     else if (size == 1 && (reg_d >= RSP || reg_s >= RSP)) \
         __a_aa__aaaa |= 0x40; \
     if (reg_d >= R8) \
-        __a_aa__aaaa |= 0x01; \
+        __a_aa__aaaa |= 0x41; \
     if (reg_s >= R8) \
-        __a_aa__aaaa |= 0x04; \
+        __a_aa__aaaa |= 0x44; \
     if (__a_aa__aaaa != 0x00) \
         byte_push(code, __a_aa__aaaa); \
 }
@@ -1079,6 +1079,7 @@ void emit_float_mul_discard(int reg_d, int reg_s, size_t size)
     emitter_log_add_3(_impl_emit_float_mul_discard, reg_d, reg_s, size);
 }
 // ---
+// left is top, right is bottom
 void _impl_emit_float_div(int reg_d, int reg_s, size_t size)
 {
     _emit_float_op(reg_d, reg_s, size, 0x5E);
@@ -1087,7 +1088,6 @@ void _impl_emit_float_div_discard(int reg_d, int reg_s, size_t size)
 {
     _impl_emit_float_div(reg_d, reg_s, size);
 }
-// left is top, right is bottom
 void emit_float_div(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_float_div, reg_d, reg_s, size);
@@ -1138,6 +1138,42 @@ void _impl_emit_float_sqrt(int reg_d, int reg_s, size_t size)
 void emit_float_sqrt(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_float_sqrt, reg_d, reg_s, size);
+}
+
+void _emit_float_op_offset(int reg_d, int reg_s, int64_t offset, size_t _size, uint8_t op)
+{
+    last_is_terminator = 0;
+    assert(reg_d >= XMM0 && reg_d <= XMM7 && reg_s <= R15);
+    assert(_size == 4 || _size == 8);
+    
+    size_t size = 4; // to trick the EMIT_LEN_PREFIX macro into emitting the right byte if the byte is needed
+    EMIT_LEN_PREFIX(reg_s, 0);
+    
+    reg_d &= 7;
+    reg_s &= 7;
+    
+    byte_push(code, (_size == 8) ? 0xF2 : 0xF3);
+    byte_push(code, 0x0F);
+    byte_push(code, op);
+    
+    _emit_addrblock(reg_d, reg_s, offset);
+}
+
+void _impl_emit_float_mul_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    _emit_float_op_offset(reg_d, reg_s, offset, size, 0x59);
+}
+void _impl_emit_float_div_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    _emit_float_op_offset(reg_d, reg_s, offset, size, 0x5E);
+}
+void _impl_emit_float_add_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    _emit_float_op_offset(reg_d, reg_s, offset, size, 0x58);
+}
+void _impl_emit_float_sub_offset(int reg_d, int reg_s, int64_t offset, size_t size)
+{
+    _emit_float_op_offset(reg_d, reg_s, offset, size, 0x5C);
 }
 
 // ---
@@ -2769,6 +2805,15 @@ void emitter_log_apply(EmitterLog * log)
     else if (log->funcptr == (void *)_impl_emit_float_sub_discard)
         _impl_emit_float_sub_discard(log->args[0], log->args[1], log->args[2]);
     
+    else if (log->funcptr == (void *)_impl_emit_float_mul_offset)
+        _impl_emit_float_mul_offset(log->args[0], log->args[1], log->args[2], log->args[3]);
+    else if (log->funcptr == (void *)_impl_emit_float_div_offset)
+        _impl_emit_float_div_offset(log->args[0], log->args[1], log->args[2], log->args[3]);
+    else if (log->funcptr == (void *)_impl_emit_float_add_offset)
+        _impl_emit_float_add_offset(log->args[0], log->args[1], log->args[2], log->args[3]);
+    else if (log->funcptr == (void *)_impl_emit_float_sub_offset)
+        _impl_emit_float_sub_offset(log->args[0], log->args[1], log->args[2], log->args[3]);
+    
     else if (log->funcptr == (void *)_impl_emit_float_sqrt)
         _impl_emit_float_sqrt(log->args[0], log->args[1], log->args[2]);
     
@@ -3034,7 +3079,7 @@ uint8_t emitter_log_try_optimize(void)
         //////// collected together here for easier debugging
         
         // consecutive movs into the same register (can be created by other optimizations)
-        if (!log_next->is_dead && // don't want to outright delete if one of them won't get emitted anyway
+        if (!log_next->is_dead &&
             (   log_prev->funcptr == (void *)_impl_emit_mov
              || log_prev->funcptr == (void *)_impl_emit_mov_discard
              || log_prev->funcptr == (void *)_impl_emit_mov_offset
@@ -3290,6 +3335,39 @@ uint8_t emitter_log_try_optimize(void)
         }
         
         /////////////// redundant memcopies and movs
+        
+        
+        // mov_xmm_from_offset_discard    12801, 5, -56, 8
+        //           float_mul_discard    12800, 12801, 8
+        if ((   log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_offset
+             || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+            ) &&
+            (   log_next->funcptr == (void *)_impl_emit_float_add_discard
+             || log_next->funcptr == (void *)_impl_emit_float_sub_discard
+             || log_next->funcptr == (void *)_impl_emit_float_mul_discard
+             || log_next->funcptr == (void *)_impl_emit_float_div_discard
+            ) &&
+            log_prev->args[0] == log_next->args[1] &&
+            log_prev->args[3] == log_next->args[2] // size
+            )
+        {
+            EmitterLog * op = emitter_log_erase_nth(0);
+            EmitterLog * mov = emitter_log_erase_nth(0);
+            
+            if (mov->is_dead)
+                emitter_log_add(mov);
+            
+            if      (log_next->funcptr == (void *)_impl_emit_float_add_discard)
+                emitter_log_add_4_noopt(_impl_emit_float_add_offset, op->args[0], mov->args[1], mov->args[2], mov->args[3]);
+            else if (log_next->funcptr == (void *)_impl_emit_float_sub_discard)
+                emitter_log_add_4_noopt(_impl_emit_float_sub_offset, op->args[0], mov->args[1], mov->args[2], mov->args[3]);
+            else if (log_next->funcptr == (void *)_impl_emit_float_div_discard)
+                emitter_log_add_4_noopt(_impl_emit_float_div_offset, op->args[0], mov->args[1], mov->args[2], mov->args[3]);
+            else if (log_next->funcptr == (void *)_impl_emit_float_mul_discard)
+                emitter_log_add_4_noopt(_impl_emit_float_mul_offset, op->args[0], mov->args[1], mov->args[2], mov->args[3]);
+            
+            return 1;
+        }
         
         // redundant memcpys
         if ((   log_prev->funcptr == (void *)_impl_emit_memcpy_static
