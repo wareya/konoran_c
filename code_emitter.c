@@ -10,6 +10,7 @@
 // enables autovectorization
 //#define EMITTER_DO_AUTOVECTORIZATION
 
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
 
@@ -3319,7 +3320,7 @@ uint8_t emitter_log_try_optimize(void)
             
             emitter_log_add(memcpy);
             
-            if (log_next->funcptr == (void *)_impl_emit_memcpy_static_discard && log_prev->args[0] == log_next->args[0])
+            if (log_next->funcptr == (void *)_impl_emit_memcpy_static_discard && log_prev->args[0] != log_next->args[0])
                 emitter_log_add(mov);
             
             return 1;
@@ -3352,7 +3353,7 @@ uint8_t emitter_log_try_optimize(void)
             
             emitter_log_add(memcpy);
             
-            if (log_next->funcptr == (void *)_impl_emit_memcpy_static_discard && log_prev->args[0] == log_next->args[0])
+            if (log_next->funcptr == (void *)_impl_emit_memcpy_static_discard && log_prev->args[0] != log_next->args[0])
                 emitter_log_add(lea);
             
             return 1;
@@ -4139,7 +4140,6 @@ uint8_t emitter_log_try_optimize(void)
                 emitter_log_add(push);
             }
         }
-        
         
         //////////////// swaps that encourage other optimizations
         
