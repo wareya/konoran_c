@@ -4,6 +4,9 @@
 #include <math.h> // remainder, remainderf
 #include "buffers.h"
 
+#define DO_ARG_VAR_HOIST_OPT
+#define DO_STRUCT_RETURN_REDIRECT_OPT
+
 // returns the exponent plus one if n is a power of 2, otherwise returns 0
 uint8_t is_po2(uint64_t n)
 {
@@ -2073,6 +2076,7 @@ Type * return_type = 0;
 FuncDef * current_funcdef = 0;
 char * return_redir = 0;
 Node * hoistable_return = 0;
+
 void compile_code(Node * ast, int want_ptr)
 {
     //printf("code len before token %zu:%zu: 0x%zX\n", ast->line, ast->column, code->len);
@@ -2490,7 +2494,11 @@ void compile_code(Node * ast, int want_ptr)
                         arg_stack_size = -return_where;
                 }
                 
+                #ifdef DO_ARG_VAR_HOIST_OPT
                 uint8_t do_arg_var_opt = 1;
+                #else
+                uint8_t do_arg_var_opt = 1;
+                #endif
                 
                 GenericList * argwheres = 0;
                 Node * arg_node = next->first_child ? next->first_child->first_child : 0;
@@ -4443,9 +4451,11 @@ void compile_defs_compile(Node * ast)
         GenericList * arg = funcdef->signature->next;
         GenericList * arg_name = funcdef->arg_names;
         
+        #ifdef DO_STRUCT_RETURN_REDIRECT_OPT
         // only worth doing for composite return types
         if (type_is_composite(return_type))
             compile_def_find_inplace_return(ast, &return_redir);
+        #endif
         
         if (return_redir == (char *)(int64_t)-1)
             return_redir = 0;
@@ -4541,22 +4551,36 @@ void compile_defs_compile(Node * ast)
                 if (where <= R15)
                 {
                     if (!type_is_composite(var->val->type))
-                        emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
+                    {
+                        if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
+                        {
+                            if (where == RDI)
+                                emit_mov_offset(R10, RBP, -8, 8);
+                            else if (where == RSI)
+                                emit_mov_offset(R10, RBP, -16, 8);
+                            else if (where == RCX)
+                                emit_mov_offset(R10, RBP, -24, 8);
+                            
+                            emit_mov_into_offset_discard(RBP, R10, -var->val->loc, var->val->type->size);
+                        }
+                        else
+                            emit_mov_into_offset_discard(RBP, where, -var->val->loc, var->val->type->size);
+                    }
                     else
                     {
                         if (var->val->kind == VAL_REDIRECTED)
                             emit_mov(RAX, R12, 8);
                         else
                             emit_lea(RAX, RBP, -var->val->loc);
+                        
                         if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
                         {
-                            int b = -1;
                             if (where == RDI)
-                                emit_mov_offset(R10, RBP, (b++)*8, 8);
+                                emit_mov_offset(R10, RBP, -8, 8);
                             else if (where == RSI)
-                                emit_mov_offset(R10, RBP, (b++)*8, 8);
+                                emit_mov_offset(R10, RBP, -16, 8);
                             else if (where == RCX)
-                                emit_mov_offset(R10, RBP, (b++)*8, 8);
+                                emit_mov_offset(R10, RBP, -24, 8);
                             
                             emit_memcpy_static_bothdiscard(RAX, R10, var->val->type->size);
                         }
