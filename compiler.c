@@ -3021,11 +3021,11 @@ void compile_code(Node * ast, int want_ptr)
                     else
                     {
                         // on heap, expand stack and memcpy onto stack
-                        emit_pop_safe(RSI);
-                        emit_add_imm_discard(RSI, prop_offset);
+                        emit_pop_safe(RAX);
+                        emit_add_imm_discard(RAX, prop_offset);
                         
                         emit_expand_stack_safe(prop_size_stack);
-                        emit_memcpy_static_discard(RSP, RSI, prop_type->size);
+                        emit_memcpy_static_discard(RSP, RAX, prop_type->size);
                         
                         stack_push_new_top(prop_type);
                     }
