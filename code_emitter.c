@@ -2829,22 +2829,34 @@ void emit_leave()
     emitter_log_add_0(_impl_emit_leave);
 }
 
+#ifndef EMITTER_NO_TEXT_LOG
 FILE * logfile = 0;
+
+#if (defined EMITTER_TEXT_LOG_ASM_NOT_IR) || (defined EMITTER_TEXT_LOG_ASM_ONLY)
+#include <Zydis/Zydis.h>
+#endif
+
+#endif
 
 void emitter_inform_func_enter(char * name)
 {
+#ifndef EMITTER_NO_TEXT_LOG
     if (!logfile)
         logfile = fopen("emitterlog.txt", "w");
     
     fprintf(logfile, "\nfunc `%s` @ 0x%08zx:\n", name, code->len);
+#endif
 }
+
 void emitter_log_apply(EmitterLog * log)
 {
+#ifndef EMITTER_NO_TEXT_LOG
     if (log->is_dead)
         return;
     
     if (!logfile)
         logfile = fopen("emitterlog.txt", "w");
+#endif
     
     size_t startlen = code->len;
     
@@ -3183,6 +3195,9 @@ void emitter_log_apply(EmitterLog * log)
         assert(("asdfklasdfl unknown emitter", 0));
     }
     
+#ifndef EMITTER_NO_TEXT_LOG
+
+#ifndef EMITTER_TEXT_LOG_ASM_ONLY
     uint8_t printnobytes = 0;
     
     if (!printnobytes)
@@ -3192,6 +3207,10 @@ void emitter_log_apply(EmitterLog * log)
             fprintf(logfile, "%02x ", code->data[i]);
         fprintf(logfile, "\n");
     }
+    
+#ifdef EMITTER_TEXT_LOG_ASM_NOT_IR
+    fprintf(logfile, "; ");
+#endif
     
     fprintf(logfile, "%32s", (log->fname + 11));
     if (log->argcount > 0)
@@ -3212,6 +3231,27 @@ void emitter_log_apply(EmitterLog * log)
             fprintf(logfile, "%#zx", log->args[i]);
     }
     fprintf(logfile, "\n");
+#endif
+    
+#if (defined EMITTER_TEXT_LOG_ASM_NOT_IR) || (defined EMITTER_TEXT_LOG_ASM_ONLY)
+    size_t offset = 0; 
+    size_t runtime_address = startlen; 
+    ZydisDisassembledInstruction instruction; 
+    while (ZYAN_SUCCESS(ZydisDisassembleIntel(
+        ZYDIS_MACHINE_MODE_LONG_64,      // machine_mode
+        runtime_address,                 // runtime_address
+        code->data + startlen + offset,  // buffer
+        code->len - startlen - offset,   // length
+        &instruction                     // instruction
+    ))) {
+        fprintf(logfile, "    %s\n", instruction.text);
+        offset += instruction.info.length;
+        runtime_address += instruction.info.length;
+    }
+    
+#endif
+    
+#endif
 }
 
 uint8_t emitter_log_try_optimize(void)

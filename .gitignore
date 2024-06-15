@@ -4,3 +4,6 @@ a.out
 .vs
 launch.json
 emitterlog.txt
+*.o
+*.asm
+*.s
