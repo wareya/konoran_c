@@ -1,15 +1,6 @@
 #include <stdint.h>
 #include "buffers.h"
 
-// for debugging. disables optimization.
-//#define EMITTER_ALWAYS_FLUSH
-
-// disable optimizations except for push/pop and mov-into-self elimination
-//#define EMITTER_PUSHPOP_ELIM_ONLY
-
-// enables autovectorization
-//#define EMITTER_DO_AUTOVECTORIZATION
-
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -2702,13 +2693,12 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
         s_aligned = 1;
     
     size_t i = 0;
-    #if 1
+    #ifndef EMITTER_DO_AUTOVECTORIZATION
+    // slower for small moves if autovectorization isn't enabled....???? why????
     if (total >= 80 ||
         (total >= 16 && s_aligned && d_aligned)
        )
     #else
-    // slower for small moves for mysterious reasons, at least on my CPU
-    //if (total >= 80)
     if (total >= 16)
     #endif
     {
@@ -3191,9 +3181,9 @@ void emitter_log_apply(EmitterLog * log)
         assert(("asdfklasdfl unknown emitter", 0));
     }
     
-    uint8_t nobytes = 0;
+    uint8_t printnobytes = 0;
     
-    if (!nobytes)
+    if (!printnobytes)
     {
         fprintf(logfile, "; 0x%08zx:  ", startlen);
         for (size_t i = startlen; i < code->len; i++)
@@ -4490,10 +4480,10 @@ uint8_t vector_optimizations(void)
         //    float_mul_offset    12800, 5, -48, 8
         // mov_offset_from_xmm    6404, 12800, 16, 8
         if (log_0->funcptr == (void *)_impl_emit_mov_xmm_from_offset &&
-            (   log_1->funcptr == (void *)_impl_emit_float_add_offset
-             || log_1->funcptr == (void *)_impl_emit_float_sub_offset
+            (   log_1->funcptr == (void *)_impl_emit_float_div_offset
              || log_1->funcptr == (void *)_impl_emit_float_mul_offset
-             || log_1->funcptr == (void *)_impl_emit_float_div_offset
+             || log_1->funcptr == (void *)_impl_emit_float_sub_offset
+             || log_1->funcptr == (void *)_impl_emit_float_add_offset
             ) &&
             log_2->funcptr == (void *)_impl_emit_mov_offset_from_xmm_discard &&
             
@@ -4578,10 +4568,10 @@ uint8_t vector_optimizations(void)
         // mov_offset_from_xmm    6404, 12800, 16, 8
         
         if (log_0->funcptr == (void *)_impl_emit_mov_xmm_from_offset &&
-            (   log_1->funcptr == (void *)_impl_emit_float_add_offset
-             || log_1->funcptr == (void *)_impl_emit_float_sub_offset
+            (   log_1->funcptr == (void *)_impl_emit_float_div_offset
              || log_1->funcptr == (void *)_impl_emit_float_mul_offset
-             || log_1->funcptr == (void *)_impl_emit_float_div_offset
+             || log_1->funcptr == (void *)_impl_emit_float_sub_offset
+             || log_1->funcptr == (void *)_impl_emit_float_add_offset
             ) &&
             log_2->funcptr == (void *)_impl_emit_mov_offset_from_xmm_discard &&
             

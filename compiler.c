@@ -4,8 +4,20 @@
 #include <math.h> // remainder, remainderf
 #include "buffers.h"
 
+// enables an optimization that hoists struct/array variable pointers directly into argument slots when possible
 #define DO_ARG_VAR_HOIST_OPT
+
+// similar but for struct return values assigned directly into variables
 #define DO_STRUCT_RETURN_REDIRECT_OPT
+
+// for debugging. disables peephole optimizations.
+//#define EMITTER_ALWAYS_FLUSH
+
+// disable peephole optimizations except for push/pop and mov-into-self elimination
+//#define EMITTER_PUSHPOP_ELIM_ONLY
+
+// enables autovectorization peephole optimizations
+#define EMITTER_DO_AUTOVECTORIZATION
 
 // returns the exponent plus one if n is a power of 2, otherwise returns 0
 uint8_t is_po2(uint64_t n)
