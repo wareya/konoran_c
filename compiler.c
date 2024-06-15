@@ -2143,6 +2143,8 @@ void compile_code(Node * ast, int want_ptr)
         printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
+        emit_leave();
+        
         if (abi == ABI_WIN)
         {
             if (type_is_composite(return_type))
@@ -2161,7 +2163,6 @@ void compile_code(Node * ast, int want_ptr)
             emit_pop(RDI);
         }
         
-        emit_leave();
         emit_ret();
     } break;
     case LABEL:
@@ -4472,17 +4473,6 @@ void compile_defs_compile(Node * ast)
         if (return_redir == (char *)(int64_t)-1)
             return_redir = 0;
         
-        // need to push rdi, rsi (non-clobbered)
-        if (abi == ABI_WIN)
-        {
-            stack_loc += 16;
-            if (type_is_composite(return_type))
-                stack_loc += 16;
-        }
-        // need to push rdi, rsi, rcx (args)
-        else if (abi == ABI_SYSV)
-            stack_loc += 32;
-        
         while (arg)
         {
             Type * type = arg->item;
@@ -4510,9 +4500,6 @@ void compile_defs_compile(Node * ast)
         
         emitter_inform_func_enter(name_text);
         
-        emit_push(RBP);
-        emit_mov(RBP, RSP, 8);
-        
         // non-clobbered
         if (abi == ABI_WIN)
         {
@@ -4533,6 +4520,9 @@ void compile_defs_compile(Node * ast)
             emit_push(RCX);
             emit_push(R12);
         }
+        
+        emit_push(RBP);
+        emit_mov(RBP, RSP, 8);
         
         emit_sub_imm32(RSP, 0x7FFFFFFF);
         log_stack_size_usage(emitter_get_code_len() - 4);
@@ -4567,11 +4557,11 @@ void compile_defs_compile(Node * ast)
                         if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
                         {
                             if (where == RDI)
-                                emit_mov_offset(R10, RBP, -8, 8);
+                                emit_mov_offset(R10, RBP, 32, 8);
                             else if (where == RSI)
-                                emit_mov_offset(R10, RBP, -16, 8);
+                                emit_mov_offset(R10, RBP, 24, 8);
                             else if (where == RCX)
-                                emit_mov_offset(R10, RBP, -24, 8);
+                                emit_mov_offset(R10, RBP, 16, 8);
                             
                             emit_mov_into_offset_discard(RBP, R10, -var->val->loc, var->val->type->size);
                         }
@@ -4588,11 +4578,11 @@ void compile_defs_compile(Node * ast)
                         if (abi == ABI_SYSV && (where == RDI || where == RSI || where == RCX))
                         {
                             if (where == RDI)
-                                emit_mov_offset(R10, RBP, -8, 8);
+                                emit_mov_offset(R10, RBP, 32, 8);
                             else if (where == RSI)
-                                emit_mov_offset(R10, RBP, -16, 8);
+                                emit_mov_offset(R10, RBP, 24, 8);
                             else if (where == RCX)
-                                emit_mov_offset(R10, RBP, -24, 8);
+                                emit_mov_offset(R10, RBP, 16, 8);
                             
                             emit_memcpy_static_bothdiscard(RAX, R10, var->val->type->size);
                         }
@@ -4857,21 +4847,7 @@ void compile(Node * ast)
         stack_loc = 0;
         local_vars = 0;
         
-        // need to push rdi, rsi (non-clobbered)
-        if (abi == ABI_WIN)
-        {
-            stack_loc += 16;
-            if (type_is_composite(return_type))
-                stack_loc += 16;
-        }
-        // need to push rdi, rsi, rcx (args)
-        else if (abi == ABI_SYSV)
-            stack_loc += 32;
-        
         emitter_inform_func_enter("(startup)");
-        
-        emit_push(RBP);
-        emit_mov(RBP, RSP, 8);
         
         // non-clobbered
         if (abi == ABI_WIN)
@@ -4894,6 +4870,9 @@ void compile(Node * ast)
             emit_push(R12);
         }
         
+        emit_push(RBP);
+        emit_mov(RBP, RSP, 8);
+        
         emit_sub_imm32(RSP, 0x7FFFFFFF);
         log_stack_size_usage(emitter_get_code_len() - 4);
         
@@ -4906,6 +4885,8 @@ void compile(Node * ast)
         
         assert(stack_loc >= 0);
         assert(stack_offset == 0);
+        
+        emit_leave();
         
         if (abi == ABI_WIN)
         {
@@ -4925,7 +4906,6 @@ void compile(Node * ast)
             emit_pop(RDI);
         }
         
-        emit_leave();
         emit_ret();
         
         do_fix_stack_size_usages(stack_loc);

@@ -128,7 +128,8 @@ int main(int argc, char ** argv)
     buffer = malloc(length+1);
     if (!buffer)
         puts("failed to allocate memory"), exit(-1);
-    fread(buffer, 1, length, f);
+    size_t n = fread(buffer, 1, length, f);
+    assert(n == (size_t)length);
     buffer[length] = 0;
     fclose(f);
     

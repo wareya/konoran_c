@@ -339,7 +339,7 @@ void free_tokens_from_front(Token * token)
     while (token)
     {
         Token * tofree = token;
-        token = token->next;
+        token = tofree->next;
         free(tofree);
     }
 }

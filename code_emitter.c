@@ -1333,7 +1333,7 @@ void _impl_emit_float_bits_trunc(size_t size)
     // uint8_t s = shift;
     // bits = (bits >> s) << s;
     
-    char trunc_f32[] = {
+    uint8_t trunc_f32[] = {
         0xb9, 0x96, 0x00, 0x00, 0x00, // mov    ecx,0x96
         0x31, 0xf6,                   // xor    esi,esi
         0x89, 0xc2,                   // mov    edx,eax
@@ -1353,7 +1353,7 @@ void _impl_emit_float_bits_trunc(size_t size)
     // input/output is RAX
     // clobbers ESI, RDX, RAX, RCX, flags
     // equivalent to above with different numbers
-    char trunc_f64[] = {
+    uint8_t trunc_f64[] = {
         0xb9, 0x33, 0x04, 0x00, 0x00,        // mov    ecx,0x433
         0x31, 0xf6,                          // xor    esi,esi
         0x48, 0x89, 0xc2,                    // mov    rdx,rax
@@ -4771,7 +4771,7 @@ uint8_t redundant_mov_elimination(void)
                         // R12 in our own code is only ever a struct return pointer, to above RBP
                         // so, writes to above R12 will never thrash anything below RBP
                         // and vice versa
-                        if (log_prev->args[0] == R12 && log_next->args[1] == RBP && log_prev->args[2] >= 0 && (int64_t)log_next->args[2] <= -8)
+                        if (log_prev->args[0] == R12 && log_next->args[1] == RBP && (int64_t)log_prev->args[2] >= 0 && (int64_t)log_next->args[2] <= -8)
                         {
                             clobbered = 0;
                         }
