@@ -97,17 +97,17 @@ int64_t abi_get_next(uint8_t word_is_float)
             
             // RDI, RSI, RDX, RCX, R8, R9 (nonfloat)
             if (used == 0)
-                return (!word_is_float) ? RDI : XMM0;
+                return RDI;
             else if (used == 1)
-                return (!word_is_float) ? RSI : XMM1;
+                return RSI;
             else if (used == 2)
-                return (!word_is_float) ? RDX : XMM2;
+                return RDX;
             else if (used == 3)
-                return (!word_is_float) ? RCX : XMM3;
+                return RCX;
             else if (used == 4)
-                return (!word_is_float) ? R8  : XMM3;
+                return R8;
             else if (used == 5)
-                return (!word_is_float) ? R9  : XMM3;
+                return R9;
             
             size_t offset = 16 + abi_stack_used;
             abi_stack_used += 8;

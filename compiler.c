@@ -2526,7 +2526,7 @@ void compile_code(Node * ast, int want_ptr)
                 #ifdef DO_ARG_VAR_HOIST_OPT
                 uint8_t do_arg_var_opt = 1;
                 #else
-                uint8_t do_arg_var_opt = 1;
+                uint8_t do_arg_var_opt = 0;
                 #endif
                 
                 GenericList * argwheres = 0;
@@ -2663,10 +2663,10 @@ void compile_code(Node * ast, int want_ptr)
                     int64_t where = return_where;
                     //printf("!!19519 5   3#)!951910 return location %zX ----!!!513\n", return_where);
                     if (where >= 0)
-                        emit_lea(where, RSP, temp_used + total_stack_expansion + 8);
+                        emit_lea_return_slot(where, RSP, temp_used + total_stack_expansion + 8);
                     else
                     {
-                        emit_lea(RAX, RSP, temp_used + total_stack_expansion + 8);
+                        emit_lea_return_slot(RAX, RSP, temp_used + total_stack_expansion + 8);
                         where = -where;
                         where -= 16; // remove rbp and return address from offset consideration
                         where += temp_used;
@@ -2729,7 +2729,7 @@ void compile_code(Node * ast, int want_ptr)
                         
                         if (var->val->kind == VAL_STACK_BOTTOM)
                         {
-                            emit_lea(RAX, RBP, -var->val->loc);
+                            emit_lea_return_slot(RAX, RBP, -var->val->loc);
                             emit_push_safe_discard(RAX);
                             stack_push_new(var->val);
                         }
