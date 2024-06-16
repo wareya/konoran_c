@@ -2844,12 +2844,8 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 else
                 {
-                    emit_pop_safe(RAX);
-                    
-                    if (!is_po2(inner_size))
-                        emit_mul_imm(RAX, RAX, inner_size, 8);
-                    else
-                        emit_shl_imm(RAX, is_po2(inner_size)-1, 8);
+                    emit_pop_safe(RSI);
+                    emit_mul_imm(RAX, RSI, inner_size, 8);
                 }
                 
                 // possible cases:
@@ -2918,7 +2914,7 @@ void compile_code(Node * ast, int want_ptr)
                         uint64_t target_offset = struct_size_stack - inner_size_stack;
                         
                         emit_lea(RDI, RSP, target_offset);
-                        // FIXME this is wrong! FIXME but how?
+                        // FIXME this is wrong! need to check for overlap!!!
                         emit_memcpy_static_bothdiscard(RDI, RAX, inner_type->size);
                         
                         emit_shrink_stack_safe(target_offset);

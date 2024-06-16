@@ -3687,7 +3687,6 @@ uint8_t emitter_log_try_optimize(void)
                 log_prev->funcptr == (void *)_impl_emit_shl_imm ||
                 log_prev->funcptr == (void *)_impl_emit_add_imm ||
                 log_prev->funcptr == (void *)_impl_emit_sub_imm ||
-                log_prev->funcptr == (void *)_impl_emit_mul_imm ||
                 log_prev->funcptr == (void *)_impl_emit_mov_imm
             );
             uint8_t next_singular = (
