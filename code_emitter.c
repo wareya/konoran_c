@@ -2503,8 +2503,8 @@ void emit_breakpoint(void)
 }
 void _impl_emit_lea(int reg_d, int reg_s, int64_t offset)
 {
-    if (reg_s == RSP)
-        printf("`-`-1 2-`3 _~# @-`04 2 5#@~   lea RSP source offset: 0x%zX\n", offset);
+    //if (reg_s == RSP)
+        //printf("`-`-1 2-`3 _~# @-`04 2 5#@~   lea RSP source offset: 0x%zX\n", offset);
     last_is_terminator = 0;
     _emit_mov_offsetlike(reg_d, reg_s, offset, 8,
         0xFF, // invalid
@@ -2519,8 +2519,8 @@ void emit_lea(int reg_d, int reg_s, int64_t offset)
 // non-register-clobbering LEA -> PUSH
 void _impl_emit_lea_fused_push(int reg_s, int64_t offset)
 {
-    if (reg_s == RSP)
-        printf("`-`-1 2-`3 _~# @-`04 2 5#@~   fused lea RSP source offset: 0x%zX\n", offset);
+    //if (reg_s == RSP)
+        //printf("`-`-1 2-`3 _~# @-`04 2 5#@~   fused lea RSP source offset: 0x%zX\n", offset);
     
     last_is_terminator = 0;
     assert(offset >= -2147483647 && offset <= 2147483647);
@@ -2622,8 +2622,8 @@ void _impl_emit_mov_xmm128_from_offset(int reg_d, int reg_s, int64_t offset, uin
     assert(reg_d >= XMM0 && reg_d <= XMM7);
     assert(reg_s <= R15);
     
-    if (aligned)
-        puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
+    //if (aligned)
+        //puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
     
     if (reg_s >= R8)
         byte_push(code, 0x41);
@@ -2650,8 +2650,8 @@ void _impl_emit_mov_offset_from_xmm128(int reg_d, int reg_s, int64_t offset, uin
     assert(reg_d <= R15);
     assert(reg_s >= XMM0 && reg_s <= XMM7);
     
-    if (aligned)
-        puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
+    //if (aligned)
+        //puts("`-`1- -`3- ~$) ~)43 -035` -`3- ~$) ~)43 -035` 0`-2 -` 90 5`   eMITTING ALIGNED MEMCPY");
     
     if (reg_d >= R8)
         byte_push(code, 0x41);
@@ -3208,10 +3208,11 @@ void emitter_log_apply(EmitterLog * log)
         fprintf(logfile, "\n");
     }
     
-#ifdef EMITTER_TEXT_LOG_ASM_NOT_IR
+#ifdef EMITTER_TEXT_LOG_ASM
     fprintf(logfile, "; ");
 #endif
     
+#if !(defined EMITTER_TEXT_LOG_ASM_ONLY) && !(defined EMITTER_TEXT_LOG_ASM_NOT_IR)
     fprintf(logfile, "%32s", (log->fname + 11));
     if (log->argcount > 0)
     {
@@ -3232,8 +3233,10 @@ void emitter_log_apply(EmitterLog * log)
     }
     fprintf(logfile, "\n");
 #endif
+
+#endif
     
-#if (defined EMITTER_TEXT_LOG_ASM_NOT_IR) || (defined EMITTER_TEXT_LOG_ASM_ONLY)
+#if (defined EMITTER_TEXT_LOG_ASM_NOT_IR) || (defined EMITTER_TEXT_LOG_ASM) || (defined EMITTER_TEXT_LOG_ASM_ONLY)
     size_t offset = 0; 
     size_t runtime_address = startlen; 
     ZydisDisassembledInstruction instruction; 
@@ -3244,7 +3247,7 @@ void emitter_log_apply(EmitterLog * log)
         code->len - startlen - offset,   // length
         &instruction                     // instruction
     ))) {
-        fprintf(logfile, "    %s\n", instruction.text);
+        fprintf(logfile, "    %s%s%s\n", instruction.text, offset == 0 ? " ; " : "", offset == 0 ? log->fname : "");
         offset += instruction.info.length;
         runtime_address += instruction.info.length;
     }
@@ -3584,6 +3587,8 @@ uint8_t emitter_log_try_optimize(void)
              || log_prev->funcptr == (void *)_impl_emit_mov_offset_discard
              || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_offset
              || log_prev->funcptr == (void *)_impl_emit_mov_xmm_from_offset_discard
+             || log_prev->funcptr == (void *)_impl_emit_mov_xmm_xmm
+             || log_prev->funcptr == (void *)_impl_emit_mov_xmm_xmm_discard
              || log_prev->funcptr == (void *)_impl_emit_mov_imm
              || log_prev->funcptr == (void *)_impl_emit_shl
              || log_prev->funcptr == (void *)_impl_emit_add

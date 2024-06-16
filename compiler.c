@@ -7,8 +7,12 @@
 // enables an optimization that hoists struct/array variable pointers directly into argument slots when possible
 #define DO_ARG_VAR_HOIST_OPT
 
-// similar but for struct return values assigned directly into variables
+// enables an optimization where the return slot can be aliased with an argument variable for some functions
 #define DO_STRUCT_RETURN_REDIRECT_OPT
+
+// enables an optimization that allows functions that return a struct directly into a variable to have the variable
+// address hoisted into their return slot
+#define DO_STRUCT_RETURN_VAR_HOIST_OPT
 
 // for debugging. disables peephole optimizations.
 //#define EMITTER_ALWAYS_FLUSH
@@ -18,6 +22,18 @@
 
 // enables autovectorization peephole optimizations
 #define EMITTER_DO_AUTOVECTORIZATION
+
+// make text log (emitterlog.txt) contain ASM
+//#define EMITTER_TEXT_LOG_ASM
+
+// make text log (emitterlog.txt) contain ASM with the peephole optimizer IR completely gone instead of commented out
+//#define EMITTER_TEXT_LOG_ASM_NOT_IR
+
+// make text log contain ASM only, no bytes
+//#define EMITTER_TEXT_LOG_ASM_ONLY
+
+// disable text log 
+//#define EMITTER_NO_TEXT_LOG
 
 // returns the exponent plus one if n is a power of 2, otherwise returns 0
 uint8_t is_po2(uint64_t n)
@@ -307,7 +323,7 @@ void do_fix_stack_size_usages(uint32_t stack_size)
     }
     stack_size_usage = 0;
     
-    printf("set stack size with %d\n", stack_size);
+    //printf("set stack size with %d\n", stack_size);
 }
 
 typedef struct _StructData
@@ -419,11 +435,11 @@ uint8_t types_same(Type * a, Type * b)
         return 1;
     if (a->size != b->size || a->variant != b->variant || a->primitive_type != b->primitive_type || strcmp(a->name, b->name) != 0)
     {
-        puts("-- general type mismatch");
-        printf("%zd, %zd\n", a->size, b->size);
-        printf("%s, %s\n", a->name, b->name);
-        printf("%zd, %zd\n", a->inner_count, b->inner_count);
-        printf("%zd, %zd\n", (uint64_t)a->inner_type, (uint64_t)b->inner_type);
+        //puts("-- general type mismatch");
+        //printf("%zd, %zd\n", a->size, b->size);
+        //printf("%s, %s\n", a->name, b->name);
+        //printf("%zd, %zd\n", a->inner_count, b->inner_count);
+        //printf("%zd, %zd\n", (uint64_t)a->inner_type, (uint64_t)b->inner_type);
         return 0;
     }
     if (type_is_pointer(a) && type_is_pointer(b))
@@ -433,7 +449,7 @@ uint8_t types_same(Type * a, Type * b)
     if (type_is_array(a) && type_is_array(b))
     {
         uint8_t ret = a->inner_count == b->inner_count && types_same(a->inner_type, b->inner_type);
-        printf("array types same? %d\n", ret);
+        //printf("array types same? %d\n", ret);
         return ret;
     }
     printf("%s, %s\n", a->name, b->name);
@@ -644,7 +660,7 @@ Variable * add_global(char * name, Type * type)
     
     if (!global_vars)
     {
-        puts("-- overwriting...");
+        //puts("-- overwriting...");
         global_vars = global;
         return global;
     }
@@ -933,8 +949,8 @@ void register_funcimport(char * name, char * sigtext, void * ptr)
 
 void add_funcimport(char * name, char * sigtext, void * ptr)
 {
-    printf("a... %s\n", name);
-    printf("b... %s\n", sigtext);
+    //printf("a... %s\n", name);
+    //printf("b... %s\n", sigtext);
     
     Token * failed_last = 0;
     Token * tokens = tokenize(sigtext, &failed_last);
@@ -1215,8 +1231,8 @@ void emit_expand_stack_safe(int64_t amount)
 }
 void emit_shrink_stack_safe(int64_t amount)
 {
-    printf("shrinking stack by %zu\n", amount);
-    printf("%zu vs %zu\n", stack_offset, amount);
+    //printf("shrinking stack by %zu\n", amount);
+    //printf("%zu vs %zu\n", stack_offset, amount);
     assert(stack_offset >= amount);
     assert(amount >= 0 && amount <= 2147483647);
     emit_add_imm(RSP, amount);
@@ -1304,7 +1320,7 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
     // constant folding
     if (left->val->kind == VAL_CONSTANT && right->val->kind == VAL_CONSTANT)
     {
-        puts("--- doing const folding...");
+        //puts("--- doing const folding...");
         Value * value = new_value(left->val->type);
         value->kind = VAL_CONSTANT;
         if (is_int)
@@ -1912,7 +1928,7 @@ void compile_unary_addrof(Node * ast)
     Type * type = val->type;
     if (type_is_pointer(type))
     {
-        puts("--- pushed real pointer...");
+        //puts("--- pushed real pointer...");
         stack_push(inspect);
     }
     else if (type_is_composite(type) && val->kind == VAL_STACK_TOP)
@@ -2140,7 +2156,7 @@ void compile_code(Node * ast, int want_ptr)
         if (type_is_composite(return_type))
             emit_mov(RAX, R12, 8);
         
-        printf("return B %zu\n", stack_offset);
+        //printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
         emit_leave();
@@ -2450,7 +2466,7 @@ void compile_code(Node * ast, int want_ptr)
         Node * hoistable = hoistable_return;
         hoistable_return = 0;
         
-        printf("before %zu\n", stack_offset);
+        //printf("before %zu\n", stack_offset);
         compile_code(nth_child(ast, 0), WANT_PTR_VIRTUAL);
         size_t i = 1;
         Node * next = nth_child(ast, i);
@@ -2691,23 +2707,51 @@ void compile_code(Node * ast, int want_ptr)
                 {
                     Value * arg_expr = 0;
                     
-                    compile_code(hoistable, 1);
-                    StackItem * item = stack_pop();
-                    Value * expr = item->val;
-                    assert(types_same(expr->type, callee_return_type));
-                    
-                    int64_t where = return_where;
-                    if (where >= 0)
+                    if (hoistable->type != NAME)
                     {
-                        emit_pop_safe(where);
+                        compile_code(hoistable, 1);
+                        StackItem * item = stack_pop();
+                        Value * expr = item->val;
+                        
+                        assert(types_same(expr->type, callee_return_type));
+                        
+                        int64_t where = return_where;
+                        if (where >= 0)
+                            emit_pop_safe(where);
+                        else
+                            assert(("TODO: not yet supported: return slot is passed on stack", 0));
                     }
                     else
                     {
-                        assert(("TODO: not yet supported: return slot is passed on stack", 0));
+                        Variable * var = get_local(hoistable->text, hoistable->textlen);
+                        assert(var->val->kind != VAL_CONSTANT);
+                        assert(types_same(var->val->type, callee_return_type));
+                        
+                        if (var->val->kind == VAL_STACK_BOTTOM)
+                        {
+                            emit_lea(RAX, RBP, -var->val->loc);
+                            emit_push_safe_discard(RAX);
+                            stack_push_new(var->val);
+                        }
+                        else if (var->val->kind == VAL_REDIRECTED)
+                        {
+                            emit_mov(RAX, R12, 8);
+                            emit_push_safe_discard(RAX);
+                            stack_push_new(var->val);
+                        }
+                        else
+                            assert(("unhandled lvar pointer origin", 0));
+                        
+                        int64_t where = return_where;
+                        if (where >= 0)
+                            emit_pop_safe(where);
+                        else
+                            assert(("TODO: not yet supported: return slot is passed on stack", 0));
                     }
                     hoistable_return = hoistable;
                 }
-                // call
+                
+                // do the call
                 
                 //#define DO_CALL_STACK_VERIFY_AT_RUNTIME
                 #ifdef DO_CALL_STACK_VERIFY_AT_RUNTIME
@@ -2791,7 +2835,7 @@ void compile_code(Node * ast, int want_ptr)
                 //size_t inner_size = guess_aligned_size_from_size(inner_type->size);
                 size_t inner_size = inner_type->size;
                 
-                printf("--~~``-`-`-`_~109111~~``!~``031~#!) inner size %zu\n", inner_size);
+                //printf("--~~``-`-`-`_~109111~~``!~``031~#!) inner size %zu\n", inner_size);
                 
                 if (value->kind == VAL_CONSTANT)
                 {
@@ -3038,7 +3082,7 @@ void compile_code(Node * ast, int want_ptr)
             i += 1;
             next = nth_child(ast, i);
         }
-        printf("after %zu\n", stack_offset);
+        //printf("after %zu\n", stack_offset);
     } break;
     case ARRAY_LITERAL:
     {
@@ -3080,7 +3124,7 @@ void compile_code(Node * ast, int want_ptr)
         else
         {
             assert(first->kind == VAL_CONSTANT);
-            printf("-- array has stack size %zu\n", stack_size);
+            //printf("-- array has stack size %zu\n", stack_size);
             emit_expand_stack_safe(stack_size);
             
             if (!type_is_composite(inner_type))
@@ -3152,8 +3196,8 @@ void compile_code(Node * ast, int want_ptr)
         Node * type_node = nth_child(ast, 0);
         Type * struct_type = parse_type(type_node);
         uint64_t struct_size_stack = type_stack_size(struct_type);
-        printf("struct name: %s\n", struct_type->name);
-        printf("struct size on stack: %zu\n", struct_size_stack);
+        //printf("struct name: %s\n", struct_type->name);
+        //printf("struct size on stack: %zu\n", struct_size_stack);
         
         emit_expand_stack_safe(struct_size_stack);
         
@@ -3234,14 +3278,14 @@ void compile_code(Node * ast, int want_ptr)
     case STATEMENT:
     {
         assert(("weird stack desync!!!", eval_stack_height == 0));
-        puts("compiling statement.....");
+        //puts("compiling statement.....");
         assert(stack_offset == 0);
         compile_code(ast->first_child, 0);
         
         // realign stack if statement produced a value (e.g. function calls)
         if (stack_peek())
         {
-            puts("realigning stack...");
+            //puts("realigning stack...");
             emit_shrink_stack_safe(stack_offset);
             stack_pop();
         }
@@ -3268,7 +3312,7 @@ void compile_code(Node * ast, int want_ptr)
         Node * name = nth_child(ast, 1);
         char * name_text = strcpy_len(name->text, name->textlen);
         assert(name_text);
-        printf("name: %s\n", name_text);
+        //printf("name: %s\n", name_text);
         
         Node * expr = nth_child(ast, 2);
         assert(expr);
@@ -3307,7 +3351,7 @@ void compile_code(Node * ast, int want_ptr)
         Type * type = parse_type(nth_child(ast, 0));
         Node * name = nth_child(ast, 1);
         char * name_text = strcpy_len(name->text, name->textlen);
-        printf("declaring local %s...\n", name_text);
+        //printf("declaring local %s...\n", name_text);
         
         size_t align = guess_alignment_from_size(type->size);
         stack_loc += type->size;
@@ -3324,10 +3368,36 @@ void compile_code(Node * ast, int want_ptr)
         {
             assert(stack_offset == 0);
             
+            hoistable_return = 0;
+#ifdef DO_STRUCT_RETURN_VAR_HOIST_OPT
+            // Some expressions (e.g. function calls returning structs) evaluate by copying into a return slot.
+            // If the assignment target is simple, these expressions can inject the assignment target in place
+            //  of building a return slot and doing another memcpy on assignment.
+            // If the expression does this, it leaves the global variable hoistable_return set to the target variable.
+            // If it doesn't do this, it sets it back to 0.
+            // This can only happen if the type is a composite (struct/array).
+            if (nth_child(ast, 2)->type == RHUNEXPR && nth_child(nth_child(ast, 2), nth_child(ast, 2)->childcount - 1)->type == FUNCARGS)
+                hoistable_return = nth_child(ast, 1);
+            
+            if (hoistable_return)
+                printf("assignment on line %d is hoistable!\n", ast->line);
+            else
+                printf("assignment on line %d is NOT hoistable!\n", ast->line);
+#endif
+            
             compile_code(nth_child(ast, 2), 0);
+            
             Value * expr = stack_pop()->val;
             
-            assert(expr);
+            puts("made it out");
+            
+            if (hoistable_return)
+            {
+                hoistable_return = 0;
+                assert(stack_offset == 0);
+                return;
+            }
+            
             assert(types_same(expr->type, type));
             
             if (!type_is_composite(expr->type))
@@ -3391,15 +3461,22 @@ void compile_code(Node * ast, int want_ptr)
             }
         }
         
+        hoistable_return = 0;
+#ifdef DO_STRUCT_RETURN_VAR_HOIST_OPT
         // Some expressions (e.g. function calls returning structs) evaluate by copying into a return slot.
         // If the assignment target is simple, these expressions can inject the assignment target in place
         //  of building a return slot and doing another memcpy on assignment.
         // If the expression does this, it leaves the global variable hoistable_return set to the target variable.
         // If it doesn't do this, it sets it back to 0.
         // This can only happen if the type is a composite (struct/array).
-        hoistable_return = 0;
         if (simple_target && nth_child(ast, 1)->type == RHUNEXPR && nth_child(nth_child(ast, 1), nth_child(ast, 1)->childcount - 1)->type == FUNCARGS)
             hoistable_return = nth_child(ast, 0);
+        
+        if (hoistable_return)
+            printf("assignment on line %d is hoistable!\n", ast->line);
+        else
+            printf("assignment on line %d is NOT hoistable!\n", ast->line);
+#endif
         
         Value * target = 0;
         
@@ -4366,7 +4443,7 @@ void compile_def_find_inplace_return(Node * ast, char ** found_name)
             char * argname = arg_name->item;
             if (strcmp(name_text, argname) == 0 && types_same(argtype, type))
             {
-                puts("-`0 0`2 0-`420 2`0   rejecting (variable declared with same name as an arg)");
+                //puts("-`0 0`2 0-`420 2`0   rejecting (variable declared with same name as an arg)");
                 *found_name = (char *)(int64_t)-1;
                 return;
             }
@@ -4376,11 +4453,11 @@ void compile_def_find_inplace_return(Node * ast, char ** found_name)
     } break;
     case RETURN:
     {
-        printf("return A %zu\n", stack_offset);
+        //printf("return A %zu\n", stack_offset);
         Node * child = ast->first_child;
         if (!child || child->type != RVAR_NAME)
         {
-            puts("-`0 0`2 0-`420 2`0   rejecting (void return)");
+            //puts("-`0 0`2 0-`420 2`0   rejecting (void return)");
             *found_name = (char *)(int64_t)-1;
             return;
         }
@@ -4391,7 +4468,7 @@ void compile_def_find_inplace_return(Node * ast, char ** found_name)
         {
             if (strcmp(rvar_name, *found_name) != 0)
             {
-                puts("-`0 0`2 0-`420 2`0   rejecting (return of other variable)");
+                //puts("-`0 0`2 0-`420 2`0   rejecting (return of other variable)");
                 *found_name = (char *)(int64_t)-1;
                 return;
             }
@@ -4409,7 +4486,7 @@ void compile_def_find_inplace_return(Node * ast, char ** found_name)
                 {
                     if (!types_same(argtype, return_type))
                     {
-                        puts("-`0 0`2 0-`420 2`0   rejecting (return of wrong type)");
+                        //puts("-`0 0`2 0-`420 2`0   rejecting (return of wrong type)");
                         *found_name = (char *)(int64_t)-1;
                         return;
                     }
@@ -4423,12 +4500,12 @@ void compile_def_find_inplace_return(Node * ast, char ** found_name)
             }
             if (!*found_name)
             {
-                puts("-`0 0`2 0-`420 2`0   rejecting (return of non-arg variable)");
+                //puts("-`0 0`2 0-`420 2`0   rejecting (return of non-arg variable)");
                 *found_name = (char *)(int64_t)-1;
                 return;
             }
         }
-        puts("-");
+        //puts("-");
     } break;
     }
     Node * child = ast->first_child;
@@ -4484,7 +4561,7 @@ void compile_defs_compile(Node * ast)
             else
             {
                 size_t align = guess_alignment_from_size(type->size);
-                printf("alignment ------ %zd\n", align);
+                //printf("alignment ------ %zd\n", align);
                 stack_loc += type->size;
                 while (stack_loc % align)
                     stack_loc++;
@@ -4825,14 +4902,14 @@ void compile(Node * ast)
         GenericList * array_type = array_types;
         while (array_type)
         {
-            puts("!!!!!!_----- sdgoiawgosdagf");
+            //puts("!!!!!!_----- sdgoiawgosdagf");
             Type * type = array_type->item;
             type->size = 0;
             aggregate_type_recalc_size(type);
             array_type = array_type->next;
         }
         
-        puts("!!!!!!_----- fdkaerhuieqhr9");
+        //puts("!!!!!!_----- fdkaerhuieqhr9");
         // compile initializers (including non-static, hence function prelude/postlude)
         FuncDef * funcdef = add_funcdef("");
         GenericList * signature = 0;
