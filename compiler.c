@@ -3376,17 +3376,17 @@ void compile_code(Node * ast, int want_ptr)
             if (nth_child(ast, 2)->type == RHUNEXPR && nth_child(nth_child(ast, 2), nth_child(ast, 2)->childcount - 1)->type == FUNCARGS)
                 hoistable_return = nth_child(ast, 1);
             
+            /*
             if (hoistable_return)
                 printf("assignment on line %d is hoistable!\n", ast->line);
             else
                 printf("assignment on line %d is NOT hoistable!\n", ast->line);
+            */
 #endif
             
             compile_code(nth_child(ast, 2), 0);
             
             Value * expr = stack_pop()->val;
-            
-            puts("made it out");
             
             if (hoistable_return)
             {
@@ -3469,10 +3469,12 @@ void compile_code(Node * ast, int want_ptr)
         if (simple_target && nth_child(ast, 1)->type == RHUNEXPR && nth_child(nth_child(ast, 1), nth_child(ast, 1)->childcount - 1)->type == FUNCARGS)
             hoistable_return = nth_child(ast, 0);
         
+        /*
         if (hoistable_return)
             printf("assignment on line %d is hoistable!\n", ast->line);
         else
             printf("assignment on line %d is NOT hoistable!\n", ast->line);
+        */
 #endif
         
         Value * target = 0;
@@ -3916,8 +3918,11 @@ void compile_code(Node * ast, int want_ptr)
             // matched with emit_push above
             emit_xmm_push_safe_discard(XMM0, type->size);
             
-            emit_label(0, label_anon_num);
-            label_anon_num += 2;
+            if (expr_type->size == 8 && !type_is_signed(expr_type))
+            {
+                emit_label(0, label_anon_num);
+                label_anon_num += 2;
+            }
             
             Value * value = new_value(type);
             value->kind = VAL_STACK_TOP;

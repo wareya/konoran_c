@@ -3,6 +3,10 @@ void _impl_emit_add_discard(int reg_d, int reg_s, size_t size)
 {
     _impl_emit_add(reg_d, reg_s, size);
 }
+void _impl_emit_add_imm_discard(int reg, int64_t val)
+{
+    _impl_emit_add_imm(reg, val);
+}
 
 void _impl_emit_sub_discard(int reg_d, int reg_s, size_t size)
 {
@@ -39,6 +43,10 @@ void _impl_emit_float_sub_discard(int reg_d, int reg_s, size_t size)
     _impl_emit_float_sub(reg_d, reg_s, size);
 }
 
+void _impl_emit_mov_xmm_from_base_discard(int reg_d, int reg_s, size_t size)
+{
+    _impl_emit_mov_xmm_from_base(reg_d, reg_s, size);
+}
 void _impl_emit_mov_xmm_xmm_discard(int reg_d, int reg_s, size_t size)
 {
     _impl_emit_mov_xmm_xmm(reg_d, reg_s, size);
