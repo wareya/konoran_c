@@ -116,8 +116,33 @@ void _impl_emit_ret(void)
     byte_push(code, 0xC3);
 }
 
-void _impl_emit_push_val(int64_t val);
-
+void _impl_emit_push_val(int64_t val)
+{
+    last_is_terminator = 0;
+    
+    if (val >= -128 && val <= 127)
+    {
+        byte_push(code, 0x6A);
+        byte_push(code, (uint8_t)val);
+    }
+    else if (val >= -2147483648 && val <= 2147483647)
+    {
+        byte_push(code, 0x68);
+        bytes_push_int(code, (uint64_t)val, 4);
+    }
+    else
+    {
+        // push ... (subtracts 8 from rsp)
+        byte_push(code, 0x68);
+        bytes_push_int(code, (uint64_t)val, 4);
+        // mov dword ptr [rsp+4], imm32
+        byte_push(code, 0xC7);
+        byte_push(code, 0x44);
+        byte_push(code, 0x24);
+        byte_push(code, 0x04);
+        bytes_push_int(code, ((uint64_t)val) >> 32, 4);
+    }
+}
 void _impl_emit_sub_imm(int reg, int64_t val)
 {
     last_is_terminator = 0;
@@ -274,21 +299,10 @@ void _impl_emit_add(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x00);
 }
-void _impl_emit_add_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_add(reg_d, reg_s, size);
-}
-
 void _impl_emit_sub(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x28);
 }
-
-void _impl_emit_sub_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_sub(reg_d, reg_s, size);
-}
-
 void _impl_emit_cmp(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x38);
@@ -298,7 +312,6 @@ void _impl_emit_test(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x84);
 }
-
 void _impl_emit_xor(int reg_d, int reg_s, size_t size)
 {
     // smaller encoding, same behavior (ops on 32-bit registers clear the upper bytes)
@@ -307,7 +320,6 @@ void _impl_emit_xor(int reg_d, int reg_s, size_t size)
     
     _emit_addlike(reg_d, reg_s, size, 0x30);
 }
-
 void _impl_emit_and(int reg_d, int reg_s, size_t size)
 {
     _emit_addlike(reg_d, reg_s, size, 0x20);
@@ -319,7 +331,36 @@ void _impl_emit_or(int reg_d, int reg_s, size_t size)
 }
 
 // uint8_t reg_byte = (reg_left << 3) | reg_right;
-void _emit_addrblock(int reg_d, int reg_s, int64_t offset);
+void _emit_addrblock(int reg_d, int reg_s, int64_t offset)
+{
+    //printf("%zX\n", offset);
+    //printf("%zd\n", offset);
+    assert(offset >= -2147483648 && offset <= 2147483647);
+    
+    uint8_t offset_flag = 0;
+    if (offset != 0)
+        offset_flag = 0x40;
+    if (offset < -128 || offset > 127)
+        offset_flag = 0x80;
+    
+    reg_s &= 7;
+    reg_d &= 7;
+    
+    uint8_t reg_byte = reg_s | (reg_d << 3);
+    
+    if (reg_s == 5 && offset_flag == 0)
+        offset_flag = 0x40;
+    
+    byte_push(code, reg_byte | offset_flag);
+    
+    if (reg_s == 4)
+        byte_push(code, 0x24);
+    
+    if (offset_flag == 0x40)
+        bytes_push_int(code, offset, 1);
+    else if (offset_flag == 0x80)
+        bytes_push_int(code, offset, 4);
+}
 
 // 48 01 45 00             add    QWORD PTR [rbp+0x0],rax
 // 48 01 00                add    QWORD PTR [rax],rax
@@ -428,30 +469,107 @@ void _impl_emit_imul(int reg, size_t size)
 {
     _emit_mullike(reg, size, 0xE8);
 }
-
 void _impl_emit_div(int reg, size_t size)
 {
     _emit_mullike(reg, size, 0xF0);
 }
-
 void _impl_emit_idiv(int reg, size_t size)
 {
     _emit_mullike(reg, size, 0xF8);
 }
-
 void _impl_emit_neg(int reg, size_t size)
 {
     _emit_mullike(reg, size, 0xD8);
 }
-
 void _impl_emit_not(int reg, size_t size)
 {
     _emit_mullike(reg, size, 0xD0);
 }
+void _impl_emit_mov(int reg_d, int reg_s, size_t size)
+{
+    last_is_terminator = 0;
+    _emit_addlike(reg_d, reg_s, size, 0x88);
+}
 
-void _impl_emit_mov(int reg_d, int reg_s, size_t size);
-void _impl_emit_mov_imm(int reg, uint64_t val, size_t size);
-void _impl_emit_shl_imm(int reg, uint8_t imm, size_t size);
+void _emit_mov_imm_extended(int reg, uint64_t val)
+{
+    last_is_terminator = 0;
+    size_t size = 8; // for EMIT_LEN_PREFIX
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, 0xC7);
+    byte_push(code, 0xC0 | reg);
+    bytes_push_int(code, val, 4);
+}
+void _emit_mov_imm(int reg, uint64_t val, size_t size)
+{
+    int64_t sval = val;
+    //if ((size == 8 || size == 4) && val == 0)
+    if (val == 0)
+    {
+        _impl_emit_xor(reg, reg, 4);
+        return;
+    }
+    /*
+    if (size > 2 && sval >= 0 && sval <= 127)
+    {
+        _impl_emit_xor(reg, reg, 4);
+        _emit_mov_imm(reg, val, 1);
+        return;
+    }
+    */
+    if ((size == 8 && sval >= -2147483648 && sval <= 2147483647) || ((size == 4 || size == 8) && sval >= 0 && sval <= 2147483647))
+    {
+        _emit_mov_imm_extended(reg, val);
+        return;
+    }
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
+    bytes_push_int(code, (uint64_t)val, size);
+}
+
+void _impl_emit_mov_imm(int reg, uint64_t val, size_t size)
+{
+    _emit_mov_imm(reg, val, size);
+}
+void _impl_emit_shl_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xE0 | reg);
+    byte_push(code, imm);
+}
+void _impl_emit_shr_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xE8 | reg);
+    byte_push(code, imm);
+}
+void _impl_emit_sar_imm(int reg, uint8_t imm, size_t size)
+{
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
+    byte_push(code, 0xF8 | reg);
+    byte_push(code, imm);
+}
+void _impl_emit_mov_imm64(int reg, uint64_t val)
+{
+    size_t size = 8;
+    last_is_terminator = 0;
+    EMIT_LEN_PREFIX(reg, 0);
+    
+    byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
+    bytes_push_int(code, (uint64_t)val, size);
+}
 
 void _impl_emit_mul_imm(int reg_d, int reg_s, int64_t imm, size_t size)
 {
@@ -560,36 +678,17 @@ void _impl_emit_float_mul(int reg_d, int reg_s, size_t size)
 {
     _emit_float_op(reg_d, reg_s, size, 0x59, 0);
 }
-void _impl_emit_float_mul_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_float_mul(reg_d, reg_s, size);
-}
-
 void _impl_emit_float_div(int reg_d, int reg_s, size_t size)
 {
     _emit_float_op(reg_d, reg_s, size, 0x5E, 0);
 }
-void _impl_emit_float_div_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_float_div(reg_d, reg_s, size);
-}
-
 void _impl_emit_float_add(int reg_d, int reg_s, size_t size)
 {
     _emit_float_op(reg_d, reg_s, size, 0x58, 0);
 }
-void _impl_emit_float_add_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_float_add(reg_d, reg_s, size);
-}
-
 void _impl_emit_float_sub(int reg_d, int reg_s, size_t size)
 {
     _emit_float_op(reg_d, reg_s, size, 0x5C, 0);
-}
-void _impl_emit_float_sub_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_float_sub(reg_d, reg_s, size);
 }
 void _impl_emit_float_sqrt(int reg_d, int reg_s, size_t size)
 {
@@ -820,8 +919,6 @@ void _impl_emit_float_bits_trunc(size_t size)
             byte_push(code, trunc_f64[i]);
     }
 }
-
-
 void _impl_emit_xorps(int reg_d, int reg_s)
 {
 //  0f 57 c0                xorps  xmm0,xmm0
@@ -838,7 +935,6 @@ void _impl_emit_xorps(int reg_d, int reg_s)
     byte_push(code, 0x57);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
-
 void _impl_emit_bts(int reg, uint8_t bit)
 {
     last_is_terminator = 0;
@@ -1229,10 +1325,6 @@ void _impl_emit_mov_xmm_xmm(int reg_d, int reg_s, size_t size)
     byte_push(code, 0x7E);
     byte_push(code, 0xC0 | reg_s | (reg_d << 3));
 }
-void _impl_emit_mov_xmm_xmm_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_mov_xmm_xmm(reg_d, reg_s, size);
-}
 void _impl_emit_mov_xmm_from_offset(int reg_d, int reg_s, int64_t offset, size_t size)
 {
     last_is_terminator = 0;
@@ -1250,10 +1342,6 @@ void _impl_emit_mov_xmm_from_offset(int reg_d, int reg_s, int64_t offset, size_t
     reg_s &= 7;
     
     _emit_addrblock(reg_d, reg_s, offset);
-}
-void _impl_emit_mov_xmm_from_offset_discard(int reg_d, int reg_s, int64_t offset, size_t size)
-{
-    _impl_emit_mov_xmm_from_offset(reg_d, reg_s, offset, size);
 }
 void _impl_emit_mov_offset_from_xmm(int reg_d, int reg_s, int64_t offset, size_t size)
 {
@@ -1273,40 +1361,6 @@ void _impl_emit_mov_offset_from_xmm(int reg_d, int reg_s, int64_t offset, size_t
     
     _emit_addrblock(reg_s, reg_d, offset);
 }
-void _impl_emit_mov_offset_from_xmm_discard(int reg_d, int reg_s, int64_t offset, size_t size)
-{
-    _impl_emit_mov_offset_from_xmm(reg_d, reg_s, offset, size);
-}
-void _emit_addrblock(int reg_d, int reg_s, int64_t offset)
-{
-    //printf("%zX\n", offset);
-    //printf("%zd\n", offset);
-    assert(offset >= -2147483648 && offset <= 2147483647);
-    
-    uint8_t offset_flag = 0;
-    if (offset != 0)
-        offset_flag = 0x40;
-    if (offset < -128 || offset > 127)
-        offset_flag = 0x80;
-    
-    reg_s &= 7;
-    reg_d &= 7;
-    
-    uint8_t reg_byte = reg_s | (reg_d << 3);
-    
-    if (reg_s == 5 && offset_flag == 0)
-        offset_flag = 0x40;
-    
-    byte_push(code, reg_byte | offset_flag);
-    
-    if (reg_s == 4)
-        byte_push(code, 0x24);
-    
-    if (offset_flag == 0x40)
-        bytes_push_int(code, offset, 1);
-    else if (offset_flag == 0x80)
-        bytes_push_int(code, offset, 4);
-}
 
 void _emit_mov_offsetlike(int reg_d, int reg_s, int64_t offset, size_t size, uint8_t byteop, uint8_t longop)
 {
@@ -1323,33 +1377,11 @@ void _impl_emit_mov_offset(int reg_d, int reg_s, int64_t offset, size_t size)
 {
     _emit_mov_offsetlike(reg_d, reg_s, offset, size, 0x8A, 0x8B);
 }
-void _impl_emit_mov_offset_discard(int reg_d, int reg_s, int64_t offset, size_t size)
-{
-    _impl_emit_mov_offset(reg_d, reg_s, offset, size);
-}
-void _impl_emit_mov(int reg_d, int reg_s, size_t size)
-{
-    last_is_terminator = 0;
-    _emit_addlike(reg_d, reg_s, size, 0x88);
-}
-void _impl_emit_mov_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_mov(reg_d, reg_s, size);
-}
 void _impl_emit_mov_into_offset(int preg_d, int reg_s, int64_t offset, size_t size)
 {
     _emit_mov_offsetlike(reg_s, preg_d, offset, size, 0x88, 0x89);
 }
 
-void _impl_emit_mov_into_offset_discard(int preg_d, int reg_s, int64_t offset, size_t size)
-{
-    _impl_emit_mov_into_offset(preg_d, reg_s, offset, size);
-}
-
-void _impl_emit_mov_into_offset_bothdiscard(int preg_d, int reg_s, int64_t offset, size_t size)
-{
-    _impl_emit_mov_into_offset(preg_d, reg_s, offset, size);
-}
 void _impl_emit_push(int reg)
 {
     last_is_terminator = 0;
@@ -1361,10 +1393,6 @@ void _impl_emit_push(int reg)
     assert(reg <= RDI);
     byte_push(code, 0x50 | reg);
 }
-void _impl_emit_push_discard(int reg)
-{
-    _impl_emit_push(reg);
-}
 void _impl_emit_push_offset(int reg, int64_t offset)
 {
     assert(reg <= R15);
@@ -1373,10 +1401,6 @@ void _impl_emit_push_offset(int reg, int64_t offset)
     byte_push(code, 0xFF);
     //_impl_emit_mov_offset(reg, offset, 8);
     _emit_addrblock(6, reg, offset);
-}
-void _impl_emit_push_offset_discard(int reg, int64_t offset)
-{
-    _impl_emit_push_offset(reg, offset);
 }
 void _impl_emit_pop(int reg)
 {
@@ -1416,10 +1440,6 @@ void _impl_emit_xmm_push(int reg, int size)
     byte_push(code, (size == 4) ? 0x7E : 0xD6);
     byte_push(code, 0x04 | (reg << 3));
     byte_push(code, 0x24);
-}
-void _impl_emit_xmm_push_discard(int reg, int size)
-{
-    _impl_emit_xmm_push(reg, size);
 }
 void _impl_emit_xmm_pop(int reg, int size)
 {
@@ -1472,84 +1492,6 @@ void _impl_emit_sar(int reg, size_t size)
     byte_push(code, (size > 1) ? 0xD3 : 0xD2);
     byte_push(code, 0xF8 | reg);
 }
-void _impl_emit_shl_imm(int reg, uint8_t imm, size_t size)
-{
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
-    byte_push(code, 0xE0 | reg);
-    byte_push(code, imm);
-}
-void _impl_emit_shr_imm(int reg, uint8_t imm, size_t size)
-{
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
-    byte_push(code, 0xE8 | reg);
-    byte_push(code, imm);
-}
-void _impl_emit_sar_imm(int reg, uint8_t imm, size_t size)
-{
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, (size > 1) ? 0xC1 : 0xC1);
-    byte_push(code, 0xF8 | reg);
-    byte_push(code, imm);
-}
-void _emit_mov_imm_extended(int reg, uint64_t val)
-{
-    last_is_terminator = 0;
-    size_t size = 8; // for EMIT_LEN_PREFIX
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, 0xC7);
-    byte_push(code, 0xC0 | reg);
-    bytes_push_int(code, val, 4);
-}
-void _emit_mov_imm(int reg, uint64_t val, size_t size)
-{
-    int64_t sval = val;
-    //if ((size == 8 || size == 4) && val == 0)
-    if (val == 0)
-    {
-        _impl_emit_xor(reg, reg, 4);
-        return;
-    }
-    /*
-    if (size > 2 && sval >= 0 && sval <= 127)
-    {
-        _impl_emit_xor(reg, reg, 4);
-        _emit_mov_imm(reg, val, 1);
-        return;
-    }
-    */
-    if ((size == 8 && sval >= -2147483648 && sval <= 2147483647) || ((size == 4 || size == 8) && sval >= 0 && sval <= 2147483647))
-    {
-        _emit_mov_imm_extended(reg, val);
-        return;
-    }
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
-    bytes_push_int(code, (uint64_t)val, size);
-}
-void _impl_emit_mov_imm(int reg, uint64_t val, size_t size)
-{
-    _emit_mov_imm(reg, val, size);
-}
-void _impl_emit_mov_imm64(int reg, uint64_t val)
-{
-    size_t size = 8;
-    last_is_terminator = 0;
-    EMIT_LEN_PREFIX(reg, 0);
-    
-    byte_push(code, 0xB0 | ((size > 1) ? 0x08 : 0) | reg);
-    bytes_push_int(code, (uint64_t)val, size);
-}
 void _impl_emit_lea_rip_offset(int reg, int64_t offset)
 {
     assert(offset >= -2147483648 && offset <= 2147483647);
@@ -1563,33 +1505,6 @@ void _impl_emit_lea_rip_offset(int reg, int64_t offset)
     byte_push(code, 0x8D);
     byte_push(code, 0x05 | (reg << 3));
     bytes_push_int(code, (uint64_t)offset, 4);
-}
-void _impl_emit_push_val(int64_t val)
-{
-    last_is_terminator = 0;
-    
-    if (val >= -128 && val <= 127)
-    {
-        byte_push(code, 0x6A);
-        byte_push(code, (uint8_t)val);
-    }
-    else if (val >= -2147483648 && val <= 2147483647)
-    {
-        byte_push(code, 0x68);
-        bytes_push_int(code, (uint64_t)val, 4);
-    }
-    else
-    {
-        // push ... (subtracts 8 from rsp)
-        byte_push(code, 0x68);
-        bytes_push_int(code, (uint64_t)val, 4);
-        // mov dword ptr [rsp+4], imm32
-        byte_push(code, 0xC7);
-        byte_push(code, 0x44);
-        byte_push(code, 0x24);
-        byte_push(code, 0x04);
-        bytes_push_int(code, ((uint64_t)val) >> 32, 4);
-    }
 }
 void _impl_emit_breakpoint(void)
 {
@@ -1605,10 +1520,6 @@ void _impl_emit_lea(int reg_d, int reg_s, int64_t offset)
         0xFF, // invalid
         0x8D // actual op
     );
-}
-void _impl_emit_lea_return_slot(int reg_d, int reg_s, int64_t offset)
-{
-    _impl_emit_lea(reg_d, reg_s, offset);
 }
 // non-register-clobbering LEA -> PUSH
 void _impl_emit_lea_fused_push(int reg_s, int64_t offset)
@@ -1786,8 +1697,8 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
         }
         if ((total - i) >= 8)
         {
-            _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 8);
-            _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 8);
+            _impl_emit_mov_offset     (RCX, reg_s, i + offset_s, 8);
+            _impl_emit_mov_into_offset(reg_d, RCX, i + offset_d, 8);
             i += 8;
         }
     }
@@ -1803,31 +1714,22 @@ void _impl_emit_memcpy_static(int reg_d, int reg_s, uint64_t offset_d, uint64_t 
     }
     if ((total - i) >= 4)
     {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 4);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 4);
+        _impl_emit_mov_offset     (RCX, reg_s, i + offset_s, 4);
+        _impl_emit_mov_into_offset(reg_d, RCX, i + offset_d, 4);
         i += 4;
     }
     if ((total - i) >= 2)
     {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 2);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 2);
+        _impl_emit_mov_offset     (RCX, reg_s, i + offset_s, 2);
+        _impl_emit_mov_into_offset(reg_d, RCX, i + offset_d, 2);
         i += 2;
     }
     if ((total - i) >= 1)
     {
-        _impl_emit_mov_offset_discard     (RCX, reg_s, i + offset_s, 1);
-        _impl_emit_mov_into_offset_discard(reg_d, RCX, i + offset_d, 1);
+        _impl_emit_mov_offset     (RCX, reg_s, i + offset_s, 1);
+        _impl_emit_mov_into_offset(reg_d, RCX, i + offset_d, 1);
         i += 1;
     }
-}
-
-void _impl_emit_memcpy_static_discard(int reg_d, int reg_s, uint64_t offset_d, uint64_t offset_s, size_t count)
-{
-    _impl_emit_memcpy_static(reg_d, reg_s, offset_d, offset_s, count);
-}
-void _impl_emit_memcpy_static_bothdiscard(int reg_d, int reg_s, uint64_t offset_d, uint64_t offset_s, size_t count)
-{
-    _impl_emit_memcpy_static(reg_d, reg_s, offset_d, offset_s, count);
 }
 
 void _impl_emit_call(int reg)

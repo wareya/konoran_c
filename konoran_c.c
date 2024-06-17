@@ -19,7 +19,8 @@
 //__attribute__((noinline))
 void print_float(double x)
 {
-    printf("%g\n", x);
+    //printf("%g\n", x);
+    printf("%.9g\n", x);
 }
 
 //__attribute__((noinline))

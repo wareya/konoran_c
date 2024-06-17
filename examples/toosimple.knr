@@ -1,0 +1,35 @@
+
+
+i32 main(i32 argc, ptr(ptr(u8)) argv)
+{
+    if (argc <= 1i32)
+    {
+        return -1i32;
+    }
+    
+    u64 n = 0u64;
+    ptr(u8) c = *(argv + sizeof ptr(u8));
+
+    loop_head:
+    if (*c != 0u8)
+    {
+        n = (n * 10u64) + (*c - '0') as u64;
+        c = c + 1u64;
+        goto loop_head;
+    }
+    
+    f64 sum = 0.0f64;
+    f64 flip = -1.0f64;
+    
+    u64 i = 1u64;
+    loop2_head:
+    if (i <= n)
+    {
+        flip = flip * -1.0f64;        
+        sum = sum + flip / ((2u64 * i - 1u64) as i32) as f64;
+        i = i + 1u64;
+        goto loop2_head;
+    }
+    print_float(sum * 4.0f64);
+    return 0i32;
+}

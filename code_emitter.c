@@ -168,8 +168,11 @@ void emitter_log_optimize(void);
 
 void emitter_log_apply(EmitterLog * log);
 
+FILE * logfile = 0;
 void emitter_log_flush(void)
 {
+    fflush(logfile);
+    
     EmitterLog * log = emitter_log;
     while (log && log->prev)
         log = log->prev;
@@ -387,6 +390,7 @@ enum {
 };
 
 #include "code_emitter_x64.c"
+#include "code_emitter_wrappers.c"
 
 void emit_jmp_short(char * label, size_t num)
 {
@@ -396,6 +400,7 @@ void emit_jmp_short(char * label, size_t num)
 }
 void emit_jmp_cond_short(char * label, size_t num, int cond)
 {
+    emitter_log_flush();
     emitter_log_add_3(_impl_emit_jmp_cond_short, label, num, cond);
     emitter_log_flush();
 }
@@ -407,6 +412,7 @@ void emit_jmp_long(char * label, size_t num)
 }
 void emit_jmp_cond_long(char * label, size_t num, int cond)
 {
+    emitter_log_flush();
     emitter_log_add_3(_impl_emit_jmp_cond_long, label, num, cond);
     emitter_log_flush();
 }
@@ -695,10 +701,6 @@ void emit_mov_xmm_from_base_discard(int reg_d, int reg_s, size_t size)
 void emit_mov_base_from_xmm(int reg_d, int reg_s, size_t size)
 {
     emitter_log_add_3(_impl_emit_mov_base_from_xmm, reg_d, reg_s, size);
-}
-void _impl_emit_mov_base_from_xmm_discard(int reg_d, int reg_s, size_t size)
-{
-    _impl_emit_mov_base_from_xmm(reg_d, reg_s, size);
 }
 void emit_mov_base_from_xmm_discard(int reg_d, int reg_s, size_t size)
 {
@@ -1010,10 +1012,21 @@ void emit_leave()
 }
 
 #ifndef EMITTER_NO_TEXT_LOG
-FILE * logfile = 0;
 
 #if (defined EMITTER_TEXT_LOG_ASM_NOT_IR) || (defined EMITTER_TEXT_LOG_ASM_ONLY)
 #include <Zydis/Zydis.h>
+
+#undef assert
+#define assert(X) \
+     ((!(X)) \
+      ?((current_node \
+         ? fprintf(stderr, "Error on line %zu column %zu\n", current_node->line, current_node->column), ((void)0) \
+         : ((void)0)), \
+        fprintf(stderr, "Assertion failed: %s\n", #X), \
+        fprintf(stderr, "In file `%s`, on line %d\n", (__FILE__), (int)(__LINE__)), \
+        crash(), ((void)0)) \
+      : ((void)0))
+
 #endif
 
 #endif

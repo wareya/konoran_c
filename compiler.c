@@ -74,6 +74,7 @@ void free_compiler_buffers(void)
 }
 
 Node * current_node = 0;
+
 #undef assert
 #define assert(X) \
      ((!(X)) \
@@ -4345,6 +4346,7 @@ void compile_code(Node * ast, int want_ptr)
         else
             assert(("only int and pointer types are supported for conditions", 0));
         
+        uint8_t first_label_needed = label_anon_num++;
         compile_code(nth_child(ast, 1), 0);
         
         // else block
@@ -4353,12 +4355,11 @@ void compile_code(Node * ast, int want_ptr)
             uint8_t second_label_needed = 0;
             if (!last_is_terminator)
             {
-                second_label_needed = label_anon_num + 1;
+                second_label_needed = label_anon_num++;
                 emit_jmp_long(0, second_label_needed);
             }
             
-            emit_label(0, label_anon_num);
-            label_anon_num += 2;
+            emit_label(0, first_label_needed);
             
             compile_code(nth_child(ast, 2), 0);
             
@@ -4366,10 +4367,7 @@ void compile_code(Node * ast, int want_ptr)
                 emit_label(0, second_label_needed);
         }
         else
-        {
-            emit_label(0, label_anon_num);
-            label_anon_num += 1;
-        }
+            emit_label(0, first_label_needed);
     } break;
     case IFGOTO:
     {
