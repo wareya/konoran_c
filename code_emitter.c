@@ -437,13 +437,6 @@ EmitterLog * emit_sub_imm(int reg, int64_t val)
     EmitterLog * ret = emitter_log_add_2(_impl_emit_sub_imm, reg, val);
     return ret;
 }
-EmitterLog * emit_sub_imm32(int reg, int64_t val)
-{
-    //emitter_log_flush();
-    EmitterLog * ret = emitter_log_add_2(_impl_emit_sub_imm32, reg, val);
-    //emitter_log_flush();
-    return ret;
-}
 EmitterLog * emit_reserve_stack_space()
 {
     return emitter_log_add_0(_impl_emit_reserve_stack_space);
@@ -455,13 +448,6 @@ EmitterLog * emit_add_imm(int reg, int64_t val)
 EmitterLog * emit_add_imm_discard(int reg, int64_t val)
 {
     return emitter_log_add_2(_impl_emit_add_imm_discard, reg, val);
-}
-EmitterLog * emit_add_imm32(int reg, int64_t val)
-{
-    //emitter_log_flush();
-    EmitterLog * ret = emitter_log_add_2(_impl_emit_add_imm32, reg, val);
-    //emitter_log_flush();
-    return ret;
 }
 
 EmitterLog * emit_add(int reg_d, int reg_s, size_t size)
@@ -1046,7 +1032,7 @@ void emitter_func_enter(char * name, uint8_t return_composite)
     emit_push(RBP);
     emit_mov(RBP, RSP, 8);
     
-    stack_grow_instruction = emit_sub_imm32(RSP, 0x7FFFFFFF);
+    stack_grow_instruction = emit_sub_imm(RSP, 0x7FFFFFFF);
 }
 
 #ifndef EMITTER_NO_TEXT_LOG
@@ -1123,9 +1109,6 @@ void emitter_log_apply(EmitterLog * log)
     
     else if (log->funcptr == (void *)_impl_emit_add_imm_discard)
         _impl_emit_add_imm_discard(log->args[0], log->args[1]);
-    
-    else if (log->funcptr == (void *)_impl_emit_add_imm32)
-        _impl_emit_add_imm32(log->args[0], log->args[1]);
     
     else if (log->funcptr == (void *)_impl_emit_add)
         _impl_emit_add(log->args[0], log->args[1], log->args[2]);
@@ -3489,7 +3472,6 @@ uint8_t dead_instruction_elimination(void)
                        log_prev->funcptr == (void *)_impl_emit_add
                     || log_prev->funcptr == (void *)_impl_emit_add_imm
                     || log_prev->funcptr == (void *)_impl_emit_add_imm_discard
-                    || log_prev->funcptr == (void *)_impl_emit_add_imm32
                     
                     || log_prev->funcptr == (void *)_impl_emit_sub
                     || log_prev->funcptr == (void *)_impl_emit_sub_imm
@@ -3625,7 +3607,6 @@ uint8_t redundant_mov_elimination(void)
                     || log_prev->funcptr == (void *)_impl_emit_add
                     || log_prev->funcptr == (void *)_impl_emit_add_imm
                     || log_prev->funcptr == (void *)_impl_emit_add_imm_discard
-                    || log_prev->funcptr == (void *)_impl_emit_add_imm32
                     
                     || log_prev->funcptr == (void *)_impl_emit_sub
                     || log_prev->funcptr == (void *)_impl_emit_sub_imm

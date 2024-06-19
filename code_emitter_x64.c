@@ -248,27 +248,6 @@ void _impl_emit_add_imm(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
-void _impl_emit_add_imm32(int reg, int64_t val)
-{
-    last_is_terminator = 0;
-    
-    // FIXME
-    assert(reg <= RDI);
-    assert(("negative or 64-bit immediate addition yet supported", (val >= 0 && val <= 2147483647)));
-    
-    byte_push(code, 0x48);
-    if (reg == RAX)
-    {
-        byte_push(code, 0x05);
-        bytes_push_int(code, (uint64_t)val, 4);
-    }
-    else
-    {
-        byte_push(code, 0x81);
-        byte_push(code, 0xC0 | reg);
-        bytes_push_int(code, (uint64_t)val, 4);
-    }
-}
 #define EMIT_LEN_PREFIX(reg_d, reg_s) \
 { \
     assert(size == 1 || size == 2 || size == 4 || size == 8); \
