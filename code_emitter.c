@@ -1032,7 +1032,7 @@ void emitter_func_enter(char * name, uint8_t return_composite)
     emit_push(RBP);
     emit_mov(RBP, RSP, 8);
     
-    stack_grow_instruction = emit_sub_imm(RSP, 0x7FFFFFFF);
+    stack_grow_instruction = emitter_log_add_2(_impl_emit_sub_imm32, RSP, 0x7FFFFFFF);
 }
 
 #ifndef EMITTER_NO_TEXT_LOG
