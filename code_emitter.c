@@ -1006,6 +1006,31 @@ EmitterLog * emit_leave()
     return emitter_log_add_0(_impl_emit_leave);
 }
 
+void emit_leave_and_return(uint8_t return_composite)
+{
+    emit_leave();
+    
+    if (abi == ABI_WIN)
+    {
+        if (return_composite)
+        {
+            emit_pop(R12);
+            emit_pop(RCX);
+        }
+        emit_pop(RSI);
+        emit_pop(RDI);
+    }
+    else if (abi == ABI_SYSV)
+    {
+        emit_pop(R12);
+        emit_pop(RCX);
+        emit_pop(RSI);
+        emit_pop(RDI);
+    }
+    
+    emit_ret();
+}
+
 void emitter_func_enter(char * name, uint8_t return_composite)
 {
     // non-clobbered

@@ -2137,27 +2137,7 @@ void compile_code(Node * ast, int want_ptr)
         //printf("return B %zu\n", stack_offset);
         assert(stack_offset == 0);
         
-        emit_leave();
-        
-        if (abi == ABI_WIN)
-        {
-            if (type_is_composite(return_type))
-            {
-                emit_pop(R12);
-                emit_pop(RCX);
-            }
-            emit_pop(RSI);
-            emit_pop(RDI);
-        }
-        else if (abi == ABI_SYSV)
-        {
-            emit_pop(R12);
-            emit_pop(RCX);
-            emit_pop(RSI);
-            emit_pop(RDI);
-        }
-        
-        emit_ret();
+        emit_leave_and_return(type_is_composite(return_type));
     } break;
     case LABEL:
     {
@@ -4875,27 +4855,7 @@ void compile(Node * ast)
         assert(stack_loc >= 0);
         assert(stack_offset == 0);
         
-        emit_leave();
-        
-        if (abi == ABI_WIN)
-        {
-            if (type_is_composite(return_type))
-            {
-                emit_pop(R12);
-                emit_pop(RCX);
-            }
-            emit_pop(RSI);
-            emit_pop(RDI);
-        }
-        else if (abi == ABI_SYSV)
-        {
-            emit_pop(R12);
-            emit_pop(RCX);
-            emit_pop(RSI);
-            emit_pop(RDI);
-        }
-        
-        emit_ret();
+        emit_leave_and_return(type_is_composite(return_type));
         
         emitter_func_exit(stack_loc);
         
