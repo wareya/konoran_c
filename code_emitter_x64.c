@@ -1,7 +1,7 @@
 
 void _impl_emit_nop(size_t len)
 {
-    last_is_terminator = 0;
+    //last_is_terminator = 0;
     if (len == 1)
         byte_push(code, 0x90);
     else if (len == 2)

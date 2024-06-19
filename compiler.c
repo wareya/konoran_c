@@ -15,7 +15,7 @@
 #define DO_STRUCT_RETURN_VAR_HOIST_OPT
 
 // for debugging. disables peephole optimizations.
-//#define EMITTER_ALWAYS_FLUSH
+//#define EMITTER_NO_OPTIMIZE
 
 // disable peephole optimizations except for push/pop and mov-into-self elimination
 //#define EMITTER_PUSHPOP_ELIM_ONLY
@@ -126,8 +126,9 @@ void free_all_compiler_allocs(void)
     }
 }
 
-#include "code_emitter.c"
+#include "code_emitter.h"
 #include "abi_handler.h"
+#include "code_emitter.c"
 
 // strncmp but checks len of left string
 int strcmp_len(const char * a, const char * b, size_t len)
@@ -302,13 +303,6 @@ void log_symbol_relocation(EmitterLog * log, char * symbol_name)
     GenericList * last = list_add(&symbol_relocs, symbol_name);
     last->payload = (uint64_t)(void *)log;
 }
-GenericList * stack_size_usage = 0;
-void log_stack_size_usage(EmitterLog * log)
-{
-    GenericList * last = list_add(&stack_size_usage, (void *)log);
-}
-
-void do_fix_stack_size_usages(uint32_t stack_size);
 
 typedef struct _StructData
 {
@@ -2273,11 +2267,6 @@ void compile_code(Node * ast, int want_ptr)
     {
         // NOTE: not allowed to thrash RDX
         
-        if (0)
-        {
-            size_t len = emitter_get_code_len();
-            printf("in RVAR_NAME!! want pointer... %d codelen %zX...\n", want_ptr, len);
-        }
         Variable * var = 0;
         FuncDef * funcdef = 0;
         char * name_text = strcpy_len(ast->text, ast->textlen);
@@ -3297,7 +3286,7 @@ void compile_code(Node * ast, int want_ptr)
         Node * expr = nth_child(ast, 2);
         assert(expr);
         
-        size_t code_start = emitter_get_code_len();
+        //size_t code_start = emitter_get_code_len();
         compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
@@ -4202,11 +4191,9 @@ void compile_code(Node * ast, int want_ptr)
                         {
                             emit_pop_safe(RDX);
                             
+                            EmitterLog * log = emit_mov_reg_preg_discard(RAX, RDX, new_type->size);
                             if (val->val->type->is_volatile)
-                                emitter_log_flush();
-                            emit_mov_reg_preg_discard(RAX, RDX, new_type->size);
-                            if (val->val->type->is_volatile)
-                                emitter_log_flush();
+                                log->is_volatile = 1;
                             
                             emit_push_safe_discard(RAX);
                         }
@@ -4218,11 +4205,9 @@ void compile_code(Node * ast, int want_ptr)
                             size_t aligned_size = type_stack_size(new_type);
                             emit_expand_stack_safe(aligned_size);
                             
+                            EmitterLog * log = emit_memcpy_static_bothdiscard(RSP, RAX, new_type->size);
                             if (val->val->type->is_volatile)
-                                emitter_log_flush();
-                            emit_memcpy_static_bothdiscard(RSP, RAX, new_type->size);
-                            if (val->val->type->is_volatile)
-                                emitter_log_flush();
+                                log->is_volatile = 1;
                             
                         }
                         Value * value = new_value(new_type);
@@ -4557,36 +4542,7 @@ void compile_defs_compile(Node * ast)
         }
         //printf("--!!-!-- input loc %d\n", stack_loc);
         
-        emitter_inform_func_enter(name_text);
-        
-        // non-clobbered
-        if (abi == ABI_WIN)
-        {
-            emit_push(RDI);
-            emit_push(RSI);
-            if (type_is_composite(return_type))
-            {
-                emit_push(RCX);
-                emit_push(R12);
-            }
-        }
-        // need to push rdi, rsi, rcx (args). needs to be an even number of pushes.
-        // we sometimes use R12 for the return address, so we push it too.
-        else if (abi == ABI_SYSV)
-        {
-            emit_push(RDI);
-            emit_push(RSI);
-            emit_push(RCX);
-            emit_push(R12);
-        }
-        
-        emit_push(RBP);
-        emit_mov(RBP, RSP, 8);
-        
-        //emit_sub_imm32(RSP, 0x7FFFFFFF);
-        //log_stack_size_usage(emitter_get_code_len() - 4);
-        EmitterLog * log = emit_reserve_stack_space();
-        log_stack_size_usage(log);
+        emitter_func_enter(name_text, type_is_composite(return_type));
         
         // emit code to assign arguments into local stack slots
         abi_reset_state();
@@ -4689,12 +4645,12 @@ void compile_defs_compile(Node * ast)
         
         // ensure termination
         printf("finished compiling function %s\n", name_text);
-        assert(last_is_terminator);
         
         // fix up stack size usages
         //printf("--!!-!-- output loc %d\n", stack_loc);
-        do_fix_stack_size_usages(stack_loc);
-        do_fix_jumps();
+        emitter_func_exit(stack_loc);
+        
+        assert(last_is_terminator);
     } break;
     default: {}
     }
@@ -4717,11 +4673,11 @@ void compile_globals_collect(Node * ast)
         Node * expr = nth_child(ast, 2);
         assert(expr);
         
-        size_t code_start = emitter_get_code_len();
+        //size_t code_start = emitter_get_code_len();
         compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
-        if (emitter_get_code_len() != code_start || val->val->kind != VAL_CONSTANT)
+        if (val->val->kind != VAL_CONSTANT)
         {
             puts("Error: tried to assign non-const value to a global constant");
             assert(0);
@@ -4759,14 +4715,14 @@ void compile_globals_collect(Node * ast)
             Node * expr = nth_child(ast, 3);
             assert(expr);
             
-            size_t code_start = emitter_get_code_len();
+            //size_t code_start = emitter_get_code_len();
             compile_code(expr, 0);
             
             StackItem * val = stack_pop();
             assert(val);
             assert(types_same(type, val->val->type));
             
-            if (emitter_get_code_len() != code_start)
+            if (val->val->kind == VAL_CONSTANT)
             {
                 if (!type_is_composite(var->val->type))
                 {
@@ -4907,36 +4863,7 @@ void compile(Node * ast)
         stack_loc = 0;
         local_vars = 0;
         
-        emitter_inform_func_enter("(startup)");
-        
-        // non-clobbered
-        if (abi == ABI_WIN)
-        {
-            emit_push(RDI);
-            emit_push(RSI);
-            if (type_is_composite(return_type))
-            {
-                emit_push(RCX);
-                emit_push(R12);
-            }
-        }
-        // need to push rdi, rsi, rcx (args). needs to be an even number of pushes.
-        // we sometimes use R12 for the return address, so we push it too.
-        else if (abi == ABI_SYSV)
-        {
-            emit_push(RDI);
-            emit_push(RSI);
-            emit_push(RCX);
-            emit_push(R12);
-        }
-        
-        emit_push(RBP);
-        emit_mov(RBP, RSP, 8);
-        
-        //emit_sub_imm32(RSP, 0x7FFFFFFF);
-        //log_stack_size_usage(emitter_get_code_len() - 4);
-        EmitterLog * log = emit_reserve_stack_space();
-        log_stack_size_usage(log);
+        emitter_func_enter("(startup)", type_is_composite(return_type));
         
         next = ast->first_child;
         while (next)
@@ -4970,8 +4897,7 @@ void compile(Node * ast)
         
         emit_ret();
         
-        do_fix_stack_size_usages(stack_loc);
-        do_fix_jumps();
+        emitter_func_exit(stack_loc);
         
         // compile individual function definitions/bodies
         next = ast->first_child;
@@ -5070,27 +4996,6 @@ void do_global_relocations(void)
         reloc = reloc->next;
     }
 }
-void do_fix_stack_size_usages(uint32_t stack_size)
-{
-    emitter_log_flush();
-    
-    // align to 16 bytes to simplify function calls
-    while (stack_size % 16)
-        stack_size++;
-    
-    GenericList * last = stack_size_usage;
-    while (last)
-    {
-        EmitterLog * log = last->item;
-        assert(log->code_len >= 4);
-        uint64_t loc = log->code_pos + log->code_len - 4;
-        memcpy(code->data + loc, &stack_size, 4);
-        last = last->next;
-    }
-    stack_size_usage = 0;
-    
-    //printf("set stack size with %d\n", stack_size);
-}
 int compile_program(Node * ast, byte_buffer ** ret_code)
 {
     code = (byte_buffer *)zero_alloc(sizeof(byte_buffer));
@@ -5129,7 +5034,7 @@ int compile_program(Node * ast, byte_buffer ** ret_code)
     // do relocations
     do_symbol_relocations();
     do_static_relocations();
-    //do_global_relocations();
+    do_global_relocations();
     
     *ret_code = code;
     return 0;
