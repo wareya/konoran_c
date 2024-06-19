@@ -3266,11 +3266,9 @@ void compile_code(Node * ast, int want_ptr)
         Node * expr = nth_child(ast, 2);
         assert(expr);
         
-        //size_t code_start = emitter_get_code_len();
         compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
-        //if (emitter_get_code_len() != code_start || val->val->kind != VAL_CONSTANT)
         if (val->val->kind != VAL_CONSTANT)
         {
             puts("Error: tried to assign non-const value to a local constant");
@@ -4478,7 +4476,7 @@ void compile_defs_compile(Node * ast)
         current_funcdef = funcdef;
         
         funcdef->code_offset = emitter_get_code_len();
-        add_visible_function(funcdef, emitter_get_code_len());
+        add_visible_function(funcdef, funcdef->code_offset);
         
         return_redir = 0;
         stack_loc = 0;
@@ -4653,7 +4651,6 @@ void compile_globals_collect(Node * ast)
         Node * expr = nth_child(ast, 2);
         assert(expr);
         
-        //size_t code_start = emitter_get_code_len();
         compile_code(expr, 0);
         StackItem * val = stack_pop();
         assert(val);
@@ -4695,7 +4692,6 @@ void compile_globals_collect(Node * ast)
             Node * expr = nth_child(ast, 3);
             assert(expr);
             
-            //size_t code_start = emitter_get_code_len();
             compile_code(expr, 0);
             
             StackItem * val = stack_pop();
@@ -4836,8 +4832,9 @@ void compile(Node * ast)
         funcdef->signature = signature;
         funcdef->num_args = 0;
         funcdef->vismod = "";
-
-        add_visible_function(funcdef, emitter_get_code_len());
+        
+        funcdef->code_offset = emitter_get_code_len();
+        add_visible_function(funcdef, funcdef->code_offset);
         
         return_redir = 0;
         stack_loc = 0;
