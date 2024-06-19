@@ -284,15 +284,15 @@ typedef struct _VisibleFunc
 } VisibleFunc;
 
 GenericList * static_relocs = 0;
-void log_static_relocation(uint64_t loc, uint64_t val)
+void log_static_relocation(EmitterLog * log, uint64_t val)
 {
-    GenericList * last = list_add(&static_relocs, (void *)loc);
+    GenericList * last = list_add(&static_relocs, (void *)log);
     last->payload = val;
 }
 GenericList * global_relocs = 0;
-void log_global_relocation(uint64_t loc, uint64_t val)
+void log_global_relocation(EmitterLog * log, uint64_t val)
 {
-    GenericList * last = list_add(&global_relocs, (void *)loc);
+    GenericList * last = list_add(&global_relocs, (void *)log);
     last->payload = val;
 }
 // 32-bit RIP-relative symbol addresses
@@ -2317,8 +2317,8 @@ void compile_code(Node * ast, int want_ptr)
                 }
                 else
                 {
-                    emit_mov_imm64(RAX, var->val->loc ^ 0x50000000);
-                    log_static_relocation(emitter_get_code_len() - 8, var->val->loc);
+                    EmitterLog * log = emit_mov_imm64(RAX, var->val->loc ^ 0x50000000);
+                    log_static_relocation(log, var->val->loc);
                     
                     emit_push_safe_discard(RAX);
                     Value * value = new_value(make_ptr_type(var->val->type));
@@ -2369,12 +2369,12 @@ void compile_code(Node * ast, int want_ptr)
             // FIXME aggregates
             assert(var->val->type->size <= 8);
             
-            emit_mov_imm64(RAX, var->val->loc ^ 0x50000000);
+            EmitterLog * log = emit_mov_imm64(RAX, var->val->loc ^ 0x50000000);
             
             if (var->val->kind == VAL_GLOBAL)
-                log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
+                log_global_relocation(log, var->val->loc);
             else if (var->val->kind == VAL_CONSTANT)
-                log_static_relocation(emitter_get_code_len() - 8, var->val->loc);
+                log_static_relocation(log, var->val->loc);
             
             if (want_ptr == 0)
             {
@@ -2447,8 +2447,8 @@ void compile_code(Node * ast, int want_ptr)
         {
             if (var->val->kind == VAL_GLOBAL)
             {
-                emit_mov_imm64(RAX, var->val->loc);
-                log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
+                EmitterLog * log = emit_mov_imm64(RAX, var->val->loc);
+                log_global_relocation(log, var->val->loc);
                 emit_push_safe_discard(RAX);
                 
                 Value * value = new_value(var->val->type);
@@ -2612,8 +2612,8 @@ void compile_code(Node * ast, int want_ptr)
                             }
                             else if (value->kind == VAL_GLOBAL)
                             {
-                                emit_mov_imm64(RAX, value->loc);
-                                log_global_relocation(emitter_get_code_len() - 8, value->loc);
+                                EmitterLog * log = emit_mov_imm64(RAX, value->loc);
+                                log_global_relocation(log, value->loc);
                             }
                             else if (value->kind == VAL_CONSTANT)
                             {
@@ -2621,8 +2621,8 @@ void compile_code(Node * ast, int want_ptr)
                                 if (value->mem)
                                     loc = push_static_data(value->mem, value->type->size);
                                 
-                                emit_mov_imm64(RAX, loc ^ 0x50000000);
-                                log_static_relocation(emitter_get_code_len() - 8, loc);
+                                EmitterLog * log = emit_mov_imm64(RAX, loc ^ 0x50000000);
+                                log_static_relocation(log, loc);
                             }
                             else
                                 assert(("internal error: unknown var source kind in func args", 0));
@@ -3136,8 +3136,8 @@ void compile_code(Node * ast, int want_ptr)
                 if (first->mem)
                     loc = push_static_data(first->mem, first->type->size);
                 
-                emit_mov_imm64(RSI, loc ^ 0x50000000);
-                log_static_relocation(emitter_get_code_len() - 8, loc);
+                EmitterLog * log = emit_mov_imm64(RSI, loc ^ 0x50000000);
+                log_static_relocation(log, loc);
                 
                 emit_memcpy_static_discard(RSP, RSI, array_type->inner_type->size);
             }
@@ -3165,8 +3165,8 @@ void compile_code(Node * ast, int want_ptr)
                     if (next->mem)
                         loc = push_static_data(next->mem, next->type->size);
                     
-                    emit_mov_imm64(RSI, loc ^ 0x50000000);
-                    log_static_relocation(emitter_get_code_len() - 8, loc);
+                    EmitterLog * log = emit_mov_imm64(RSI, loc ^ 0x50000000);
+                    log_static_relocation(log, loc);
                     
                     emit_lea(RDI, RSP, inner_size * i);
                     
@@ -3408,13 +3408,13 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm64(RSI, loc ^ 0x50000000);
-                    log_static_relocation(emitter_get_code_len() - 8, loc);
+                    EmitterLog * log = emit_mov_imm64(RSI, loc ^ 0x50000000);
+                    log_static_relocation(log, loc);
                 }
                 else
                 {
-                    emit_mov_imm64(RSI, expr->loc ^ 0x50000000);
-                    log_static_relocation(emitter_get_code_len() - 8, expr->loc);
+                    EmitterLog * log = emit_mov_imm64(RSI, expr->loc ^ 0x50000000);
+                    log_static_relocation(log, expr->loc);
                 }
                 
                 emit_lea(RAX, RBP, -var->val->loc);
@@ -3525,13 +3525,13 @@ void compile_code(Node * ast, int want_ptr)
                 if (expr->mem)
                 {
                     size_t loc = push_static_data(expr->mem, expr->type->size);
-                    emit_mov_imm64(RSI, loc ^ 0x50000000);
-                    log_static_relocation(emitter_get_code_len() - 8, loc);
+                    EmitterLog * log = emit_mov_imm64(RSI, loc ^ 0x50000000);
+                    log_static_relocation(log, loc);
                 }
                 else
                 {
-                    emit_mov_imm64(RSI, expr->loc ^ 0x50000000);
-                    log_static_relocation(emitter_get_code_len() - 8, expr->loc);
+                    EmitterLog * log = emit_mov_imm64(RSI, expr->loc ^ 0x50000000);
+                    log_static_relocation(log, expr->loc);
                 }
                 
                 emit_memcpy_static_discard(RAX, RSI, expr->type->size);
@@ -4132,8 +4132,8 @@ void compile_code(Node * ast, int want_ptr)
         {
             size_t loc = push_static_data((uint8_t *)output_str, j);
             
-            emit_mov_imm64(RAX, loc ^ 0x50000000);
-            log_static_relocation(emitter_get_code_len() - 8, loc);
+            EmitterLog * log = emit_mov_imm64(RAX, loc ^ 0x50000000);
+            log_static_relocation(log, loc);
             emit_push_safe_discard(RAX);
             
             Value * val = new_value(make_ptr_type(get_type("u8")));
@@ -4788,8 +4788,8 @@ void compile_globals_collect(Node * ast)
                 {
                     emit_pop_safe(RDX);
                     // move variable location into RAX
-                    emit_mov_imm64(RAX, var->val->loc);
-                    log_global_relocation(emitter_get_code_len() - 8, var->val->loc);
+                    EmitterLog * log = emit_mov_imm64(RAX, var->val->loc);
+                    log_global_relocation(log, var->val->loc);
                     emit_mov_into_offset_bothdiscard(RAX, RDX, 0, val->val->type->size);
                 }
                 else
@@ -5051,11 +5051,15 @@ void do_static_relocations(void)
     GenericList * reloc = static_relocs;
     while (reloc)
     {
-        uint64_t loc = (uint64_t)reloc->item;
+        EmitterLog * log = (EmitterLog *)reloc->item;
+        assert(log);
         uint64_t offset = reloc->payload;
         
         uint64_t addr = (uint64_t)static_data->data + offset;
         
+        assert(log->code_len - log->code_pos >= 8);
+        assert(log->code_pos > 0);
+        uint64_t loc = log->code_pos - 8;
         memcpy(code->data + loc, &addr, 8);
         
         reloc = reloc->next;
@@ -5067,11 +5071,15 @@ void do_global_relocations(void)
     GenericList * reloc = global_relocs;
     while (reloc)
     {
-        uint64_t loc = (uint64_t)reloc->item;
+        EmitterLog * log = (EmitterLog *)reloc->item;
+        assert(log);
         uint64_t offset = reloc->payload;
         
         uint64_t addr = (uint64_t)global_data->data + offset;
         
+        assert(log->code_len - log->code_pos >= 8);
+        assert(log->code_pos > 0);
+        uint64_t loc = log->code_pos - 8;
         memcpy(code->data + loc, &addr, 8);
         
         reloc = reloc->next;
