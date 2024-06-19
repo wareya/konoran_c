@@ -16,14 +16,11 @@
 #include "compiler.c"
 #include "jitify.c"
 
-//__attribute__((noinline))
 void print_float(double x)
 {
-    //printf("%g\n", x);
     printf("%.9g\n", x);
 }
 
-//__attribute__((noinline))
 void print_bytes(uint8_t * bytes, uint64_t count)
 {
     while (count > 0)
@@ -35,7 +32,6 @@ void print_bytes(uint8_t * bytes, uint64_t count)
     puts("");
 }
 
-//__attribute__((noinline))
 void print_fmt(char * string, char ** vars)
 {
     char state = ' '; // ' ' - normal, '%' - in format specifier
@@ -112,8 +108,6 @@ void print_fmt(char * string, char ** vars)
 
 int main(int argc, char ** argv)
 {
-    print_float(1234.13);
-    
     if (argc < 2)
         return puts("please supply filename"), 0;
     char * buffer = 0;

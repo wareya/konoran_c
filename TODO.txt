@@ -1,7 +1,3 @@
 konoran C todo list:
 - missing constexpr casts, etc (basically most of the places _push_small_if_const is used)
-- missing constexpr locals
 - missing some stuff about globals
-- composite types
--- emit memcpy function (mov rsi ..., mov rdi ..., rep movsb)
-- composites on ABI boundary
