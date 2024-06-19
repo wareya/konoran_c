@@ -297,35 +297,18 @@ void log_global_relocation(EmitterLog * log, uint64_t val)
 }
 // 32-bit RIP-relative symbol addresses
 GenericList * symbol_relocs = 0;
-void log_symbol_relocation(uint64_t loc, char * symbol_name)
+void log_symbol_relocation(EmitterLog * log, char * symbol_name)
 {
     GenericList * last = list_add(&symbol_relocs, symbol_name);
-    last->payload = loc;
+    last->payload = (uint64_t)(void *)log;
 }
 GenericList * stack_size_usage = 0;
-void log_stack_size_usage(uint64_t loc)
+void log_stack_size_usage(EmitterLog * log)
 {
-    GenericList * last = list_add(&stack_size_usage, 0);
-    last->payload = loc;
+    GenericList * last = list_add(&stack_size_usage, (void *)log);
 }
 
-void do_fix_stack_size_usages(uint32_t stack_size)
-{
-    // align to 16 bytes to simplify function calls
-    while (stack_size % 16)
-        stack_size++;
-    
-    GenericList * last = stack_size_usage;
-    while (last)
-    {
-        uint64_t loc = last->payload;
-        memcpy(&(code->data[loc]), &stack_size, 4);
-        last = last->next;
-    }
-    stack_size_usage = 0;
-    
-    //printf("set stack size with %d\n", stack_size);
-}
+void do_fix_stack_size_usages(uint32_t stack_size);
 
 typedef struct _StructData
 {
@@ -2399,8 +2382,8 @@ void compile_code(Node * ast, int want_ptr)
                 emit_push_val_safe(funcdef->code_offset);
             else
             {
-                emit_lea_rip_offset(RAX, 0);
-                log_symbol_relocation(emitter_get_code_len() - 4, name_text);
+                EmitterLog * log = emit_lea_rip_offset(RAX, 0);
+                log_symbol_relocation(log, name_text);
                 emit_push_safe_discard(RAX);
             }
             
@@ -4600,8 +4583,10 @@ void compile_defs_compile(Node * ast)
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         
-        emit_sub_imm32(RSP, 0x7FFFFFFF);
-        log_stack_size_usage(emitter_get_code_len() - 4);
+        //emit_sub_imm32(RSP, 0x7FFFFFFF);
+        //log_stack_size_usage(emitter_get_code_len() - 4);
+        EmitterLog * log = emit_reserve_stack_space();
+        log_stack_size_usage(log);
         
         // emit code to assign arguments into local stack slots
         abi_reset_state();
@@ -4709,7 +4694,6 @@ void compile_defs_compile(Node * ast)
         // fix up stack size usages
         //printf("--!!-!-- output loc %d\n", stack_loc);
         do_fix_stack_size_usages(stack_loc);
-        // fix up jumps
         do_fix_jumps();
     } break;
     default: {}
@@ -4949,8 +4933,10 @@ void compile(Node * ast)
         emit_push(RBP);
         emit_mov(RBP, RSP, 8);
         
-        emit_sub_imm32(RSP, 0x7FFFFFFF);
-        log_stack_size_usage(emitter_get_code_len() - 4);
+        //emit_sub_imm32(RSP, 0x7FFFFFFF);
+        //log_stack_size_usage(emitter_get_code_len() - 4);
+        EmitterLog * log = emit_reserve_stack_space();
+        log_stack_size_usage(log);
         
         next = ast->first_child;
         while (next)
@@ -5020,7 +5006,9 @@ void do_symbol_relocations(void)
     GenericList * reloc = symbol_relocs;
     while (reloc)
     {
-        uint64_t loc = reloc->payload;
+        EmitterLog * log = (EmitterLog *)reloc->payload;
+        assert(log->code_len >= 4);
+        uint64_t loc = log->code_pos + log->code_len - 4;
         char * symbol_name = (char *)reloc->item;
         
         FuncDef * funcdef = funcdefs;
@@ -5057,15 +5045,13 @@ void do_static_relocations(void)
         
         uint64_t addr = (uint64_t)static_data->data + offset;
         
-        assert(log->code_len - log->code_pos >= 8);
-        assert(log->code_pos > 0);
-        uint64_t loc = log->code_pos - 8;
+        assert(log->code_len >= 8);
+        uint64_t loc = log->code_pos + log->code_len - 8;
         memcpy(code->data + loc, &addr, 8);
         
         reloc = reloc->next;
     }
 }
-
 void do_global_relocations(void)
 {
     GenericList * reloc = global_relocs;
@@ -5077,15 +5063,34 @@ void do_global_relocations(void)
         
         uint64_t addr = (uint64_t)global_data->data + offset;
         
-        assert(log->code_len - log->code_pos >= 8);
-        assert(log->code_pos > 0);
-        uint64_t loc = log->code_pos - 8;
+        assert(log->code_len >= 8);
+        uint64_t loc = log->code_pos + log->code_len - 8;
         memcpy(code->data + loc, &addr, 8);
         
         reloc = reloc->next;
     }
 }
-
+void do_fix_stack_size_usages(uint32_t stack_size)
+{
+    emitter_log_flush();
+    
+    // align to 16 bytes to simplify function calls
+    while (stack_size % 16)
+        stack_size++;
+    
+    GenericList * last = stack_size_usage;
+    while (last)
+    {
+        EmitterLog * log = last->item;
+        assert(log->code_len >= 4);
+        uint64_t loc = log->code_pos + log->code_len - 4;
+        memcpy(code->data + loc, &stack_size, 4);
+        last = last->next;
+    }
+    stack_size_usage = 0;
+    
+    //printf("set stack size with %d\n", stack_size);
+}
 int compile_program(Node * ast, byte_buffer ** ret_code)
 {
     code = (byte_buffer *)zero_alloc(sizeof(byte_buffer));

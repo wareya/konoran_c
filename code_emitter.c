@@ -462,6 +462,10 @@ EmitterLog * emit_sub_imm32(int reg, int64_t val)
     emitter_log_flush();
     return ret;
 }
+EmitterLog * emit_reserve_stack_space()
+{
+    return emitter_log_add_0(_impl_emit_reserve_stack_space);
+}
 EmitterLog * emit_add_imm(int reg, int64_t val)
 {
     return emitter_log_add_2(_impl_emit_add_imm, reg, val);
@@ -1409,6 +1413,9 @@ void emitter_log_apply(EmitterLog * log)
     
     else if (log->funcptr == (void *)_impl_emit_leave)
         _impl_emit_leave();
+    
+    else if (log->funcptr == (void *)_impl_emit_reserve_stack_space)
+        _impl_emit_reserve_stack_space();
     
     else
     {

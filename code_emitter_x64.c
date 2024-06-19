@@ -210,6 +210,15 @@ void _impl_emit_sub_imm32(int reg, int64_t val)
         bytes_push_int(code, (uint64_t)val, 4);
     }
 }
+// Quasi-dummy that needs to have 4 bytes of space for the stack expansion size, but might OR MIGHT NOT
+//  be replaced with a sub_imm() call during optimization, if optimization is full-function instead of peephole.
+void _impl_emit_reserve_stack_space()
+{
+    byte_push(code, 0x48);
+    byte_push(code, 0x81);
+    byte_push(code, 0xE8 | RSP);
+    bytes_push_int(code, 0x7FFFFFFF, 4);
+}
 void _impl_emit_add_imm(int reg, int64_t val)
 {
     last_is_terminator = 0;
