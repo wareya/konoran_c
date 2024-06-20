@@ -1524,39 +1524,33 @@ void compile_infix_basic(StackItem * left, StackItem * right, char op)
             emit_xor(RAX, RDX, size);
             emit_push_safe_discard(RAX);
         }
-        else if (op == 'd' || op == 'r' || op == '/' || op == '%')
+        else if (op == '/')
         {
-            uint8_t is_div = (op == 'd' || op == '/');
-            emit_mov(RDI, RDX, size);
-            emit_xor(RDX, RDX, size);
-            // if / or %, and denominator is zero, jump over div and push 0 instead
-            if (op == '/' || op == '%')
-            {
-                emit_test(RDI, RDI, size);
-                emit_jmp_cond_short(0, label_anon_num, J_EQ);
-            }
-            
             if (int_signed)
-                emit_idiv(RDI, size);
+                emit_idiv_safe(RDX, size);
             else
-                emit_div(RDI, size);
-            
-            if (is_div)
-                emit_push_safe_discard(RAX);
+                emit_udiv_safe(RDX, size);
+        }
+        else if (op == '%')
+        {
+            if (int_signed)
+                emit_irem_safe(RDX, size);
             else
-                emit_push_safe_discard(RDX);
-            
-            if (op == '/' || op == '%')
-            {
-                emit_jmp_short(0, label_anon_num + 1);
-                
-                emit_label(0, label_anon_num);
-                // paired with the above emit_push_safe calls
-                emit_push_discard(RDI);
-                
-                emit_label(0, label_anon_num + 1);
-                label_anon_num += 2;
-            }
+                emit_urem_safe(RDX, size);
+        }
+        else if (op == 'd')
+        {
+            if (int_signed)
+                emit_idiv_unsafe(RDX, size);
+            else
+                emit_udiv_unsafe(RDX, size);
+        }
+        else if (op == 'r')
+        {
+            if (int_signed)
+                emit_irem_unsafe(RDX, size);
+            else
+                emit_urem_unsafe(RDX, size);
         }
         else if (op == 'L' || op == 'R')
         {

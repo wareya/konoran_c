@@ -201,19 +201,6 @@ void emitter_log_add(EmitterLog * arg_log)
         emitter_log->next = arg_log;
     emitter_log = arg_log;
     emitter_log_size += 1;
-    /*
-    while (emitter_log_size > EMITTER_LOG_MAX_LEN)
-    {
-        EmitterLog * log = emitter_log;
-        while (log && log->prev)
-            log = log->prev;
-        if (log->next)
-            log->next->prev = 0;
-        emitter_log_apply(log);
-        
-        emitter_log_size -= 1;
-    }
-    */
 }
 EmitterLog * _emitter_log_add_0(uint8_t noopt, void * funcptr, char * fname)
 {
@@ -512,6 +499,8 @@ EmitterLog * emit_idiv(int reg, size_t size)
 {
     return emitter_log_add_2(_impl_emit_idiv, reg, size);
 }
+
+
 // ---
 EmitterLog * emit_neg(int reg, size_t size)
 {
@@ -819,6 +808,77 @@ EmitterLog * emit_xmm_pop(int reg, int size)
     return emitter_log_add_2(_impl_emit_xmm_pop, reg, size);
 }
 
+// TODO: move to an emitter function
+// clobbers RAX, RDX. will clobber RDI if reg is RAX or RDX.
+EmitterLog * emit_divrem_generic(int reg, uint8_t is_div, uint8_t is_signed, uint8_t is_safe, size_t size)
+{
+    int real_reg = reg;
+    if (real_reg == RDX || real_reg == RAX)
+    {
+        emit_mov(RDI, real_reg, size);
+        real_reg = RDI;
+    }
+    emit_xor(RDX, RDX, size);
+    // if / or %, and denominator is zero, jump over div and push 0 instead
+    if (is_safe)
+    {
+        emit_test(real_reg, real_reg, size);
+        emit_jmp_cond_short(0, label_anon_num, J_EQ);
+    }
+    
+    if (is_signed)
+        emit_idiv(real_reg, size);
+    else
+        emit_div(real_reg, size);
+    
+    if (!is_div)
+        emit_mov(RAX, RDX, size);
+    
+    if (is_safe)
+    {
+        emit_jmp_short(0, label_anon_num + 1);
+        
+        emit_label(0, label_anon_num);
+        // paired with the above emit_push_safe calls
+        emit_xor(RAX, RAX, size > 4 ? 4 : size);
+        
+        emit_label(0, label_anon_num + 1);
+        label_anon_num += 2;
+    }
+    return 0;
+}
+EmitterLog * emit_udiv_safe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 1, 0, 1, size);
+}
+EmitterLog * emit_idiv_safe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 1, 1, 1, size);
+}
+EmitterLog * emit_urem_safe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 0, 0, 1, size);
+}
+EmitterLog * emit_irem_safe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 0, 1, 1, size);
+}
+EmitterLog * emit_udiv_unsafe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 1, 0, 0, size);
+}
+EmitterLog * emit_idiv_unsafe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 1, 1, 0, size);
+}
+EmitterLog * emit_urem_unsafe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 0, 0, 0, size);
+}
+EmitterLog * emit_irem_unsafe(int reg, size_t size)
+{
+    return emit_divrem_generic(reg, 0, 1, 0, size);
+}
 
 EmitterLog * emit_shl(int reg, size_t size)
 {
